@@ -380,3 +380,24 @@ input[type="range"]::-moz-range-thumb:hover {
 #command-list::-webkit-scrollbar-thumb:hover {
   background: #4a4e54;
 }
+
+/* Pulse animation for highlighting changes */
+@keyframes pulse {
+  0% {
+    background-color: transparent;
+  }
+  50% {
+    background-color: rgba(95, 211, 188, 0.3);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.pulse-highlight {
+  animation: pulse 0.6s ease-in-out;
+}
+
+.persistent-highlight {
+  background-color: rgba(95, 211, 188, 0.3);
+}

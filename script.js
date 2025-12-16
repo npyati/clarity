@@ -622,6 +622,10 @@ function createChordSection() {
   container.appendChild(label);
 
   const select = document.createElement('select');
+
+  // Check if current chord is a custom numeric definition
+  const isCustomChord = /^[\d\s\-]+$/.test(globalConfig.chord.value);
+
   // Dynamically populate from loaded chord definitions
   const options = Object.keys(CHORD_INTERVALS);
   options.forEach(optValue => {
@@ -634,13 +638,25 @@ function createChordSection() {
     select.appendChild(option);
   });
 
+  // Add "custom" option only if current chord is custom
+  if (isCustomChord) {
+    const customOption = document.createElement('option');
+    customOption.value = 'custom';
+    customOption.textContent = 'custom';
+    customOption.selected = true;
+    select.appendChild(customOption);
+  }
+
   // Event listener to update text and config
   select.addEventListener('change', (e) => {
     if (!isUpdatingFromText) {
-      updateParameterInBlocks('chord', e.target.value);
-      // Update config directly (following the pattern of other global parameters)
-      globalConfig.chord.value = e.target.value;
-      globalConfig.chord.isDefault = false;
+      // Don't update document if "custom" is selected - user must type numeric values directly
+      if (e.target.value !== 'custom') {
+        updateParameterInBlocks('chord', e.target.value);
+        // Update config directly (following the pattern of other global parameters)
+        globalConfig.chord.value = e.target.value;
+        globalConfig.chord.isDefault = false;
+      }
     }
   });
 
@@ -1060,16 +1076,25 @@ const polyphonyManager = new PolyphonyManager();
 // Calculate all frequencies for a chord based on root frequency
 function getChordFrequencies(rootFrequency) {
   const chordType = globalConfig.chord.value;
-  const intervals = CHORD_INTERVALS[chordType] || [];
+  let intervals = [];
 
-  // Always include root
-  const frequencies = [rootFrequency];
+  // Check if it's a custom numeric definition (e.g., "-2 0 1 4 7")
+  if (/^[\d\s\-]+$/.test(chordType)) {
+    // Parse custom chord: split by spaces and convert to numbers
+    intervals = chordType.split(/\s+/).map(s => parseInt(s)).filter(n => !isNaN(n));
+  } else {
+    // Predefined chord from CHORD_INTERVALS
+    intervals = CHORD_INTERVALS[chordType] || [];
+    // For predefined chords, always include root (0)
+    if (!intervals.includes(0)) {
+      intervals = [0, ...intervals];
+    }
+  }
 
-  // Add chord tones
-  intervals.forEach(semitones => {
+  // Convert intervals to frequencies
+  const frequencies = intervals.map(semitones => {
     // frequency = rootFrequency * 2^(semitones/12)
-    const chordFrequency = rootFrequency * Math.pow(2, semitones / 12);
-    frequencies.push(chordFrequency);
+    return rootFrequency * Math.pow(2, semitones / 12);
   });
 
   return frequencies;
@@ -1232,6 +1257,11 @@ function formatBlock(block) {
 
   content.innerHTML = `${leadingSpaces}<span class="syntax-key">${matchedKey}</span> <span class="${valueClass}">${value}</span>`;
 
+  // Preserve any trailing space after the value
+  if (text.endsWith(' ') && !trimmed.endsWith(' ')) {
+    content.appendChild(document.createTextNode(' '));
+  }
+
   // Restore cursor position after formatting
   setCursorPositionInBlock(content, cursorPos);
 }
@@ -1342,6 +1372,35 @@ function initializeBlocks() {
 }
 
 // Update a specific parameter by finding and updating its block
+// Track currently highlighted element for sliders
+let currentlyHighlightedElement = null;
+
+// Helper to scroll to and pulse a block/element
+function scrollToAndPulse(element, persist = false) {
+  // Scroll into view
+  element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+  if (persist) {
+    // Keep highlight on - for sliders being dragged
+    element.classList.add('persistent-highlight');
+    currentlyHighlightedElement = element;
+  } else {
+    // Add pulse animation for one-time pulses
+    element.classList.add('pulse-highlight');
+    setTimeout(() => {
+      element.classList.remove('pulse-highlight');
+    }, 600);
+  }
+}
+
+// Remove highlight from currently highlighted element
+function clearHighlight() {
+  if (currentlyHighlightedElement) {
+    currentlyHighlightedElement.classList.remove('persistent-highlight');
+    currentlyHighlightedElement = null;
+  }
+}
+
 function updateParameterInBlocks(parameterName, newValue, oscIndex = -1) {
   const blocks = Array.from(parametersTextbox.querySelectorAll('.block'));
   let currentOscIndex = -1;
@@ -1376,6 +1435,9 @@ function updateParameterInBlocks(parameterName, newValue, oscIndex = -1) {
             // Stop active notes so they restart with new config
             polyphonyManager.stopAllNotes();
           }
+
+          // Scroll to and persist highlight while dragging
+          scrollToAndPulse(block, true);
           return;
         }
       }
@@ -1384,7 +1446,9 @@ function updateParameterInBlocks(parameterName, newValue, oscIndex = -1) {
       if (!text.startsWith(' ') && text.startsWith(parameterName + ' ')) {
         content.textContent = `${parameterName} ${newValue}`;
         formatBlock(block);
-        // For global parameters, we don't need to call syncUIFromText
+
+        // Scroll to and persist highlight while dragging
+        scrollToAndPulse(block, true);
         return;
       }
     }
@@ -1771,6 +1835,67 @@ parametersTextbox.addEventListener("keydown", (e) => {
   }
 });
 
+// Helper to scroll to corresponding control in pane when editing document
+function scrollToPaneControl(blockContent) {
+  const text = blockContent.textContent.trim();
+  if (!text) return;
+
+  let controlSection = null;
+
+  // Check if it's an oscillator header
+  const oscMatch = text.match(/^oscillator\s+(.+)$/i);
+  if (oscMatch) {
+    // Find the oscillator section by data-oscillatorIndex
+    const oscName = oscMatch[1].trim();
+    const oscIndex = oscillatorNames.indexOf(oscName);
+    if (oscIndex >= 0) {
+      controlSection = document.querySelector(`[data-oscillatorIndex="${oscIndex}"]`);
+    }
+  } else if (text.startsWith('  ')) {
+    // It's an indented parameter - find its oscillator section
+    // Get the oscillator index by scanning backwards
+    const blocks = Array.from(parametersTextbox.querySelectorAll('.block'));
+    const currentIndex = blocks.findIndex(b => b.querySelector('.block-content') === blockContent);
+
+    for (let i = currentIndex - 1; i >= 0; i--) {
+      const prevText = blocks[i].querySelector('.block-content')?.textContent.trim();
+      const prevOscMatch = prevText?.match(/^oscillator\s+(.+)$/i);
+      if (prevOscMatch) {
+        const oscName = prevOscMatch[1].trim();
+        const oscIndex = oscillatorNames.indexOf(oscName);
+        if (oscIndex >= 0) {
+          controlSection = document.querySelector(`[data-oscillatorIndex="${oscIndex}"]`);
+        }
+        break;
+      }
+    }
+  } else {
+    // Global parameter - match by section ID or header text
+    if (text.startsWith('master volume')) {
+      controlSection = document.getElementById('master-volume-section');
+    } else if (text.startsWith('envelope')) {
+      controlSection = document.getElementById('master-envelope-section');
+    } else if (text.startsWith('compressor')) {
+      controlSection = document.getElementById('compressor-section');
+    } else if (text.startsWith('chord')) {
+      controlSection = document.getElementById('chord-section');
+    }
+  }
+
+  if (controlSection) {
+    // Scroll the right pane to show the control
+    const rightPane = document.querySelector('.right-pane');
+    const controlTop = controlSection.offsetTop;
+    rightPane.scrollTo({ top: controlTop - 100, behavior: 'smooth' });
+
+    // Pulse the section header
+    const header = controlSection.querySelector('h2');
+    if (header) {
+      scrollToAndPulse(header);
+    }
+  }
+}
+
 // Block-based input handling with event delegation
 parametersTextbox.addEventListener("input", () => {
   // Get the current block based on selection
@@ -1797,6 +1922,9 @@ parametersTextbox.addEventListener("input", () => {
 
   // Sync the UI
   syncUIFromText();
+
+  // Scroll to and pulse the corresponding control in the pane
+  scrollToPaneControl(blockContent);
 
   // Reset flag
   isUpdatingFromText = false;
@@ -2130,6 +2258,11 @@ function initialize() {
 
 // Start initialization
 initialize();
+
+// Clear highlight when mouse is released (for slider highlighting)
+document.addEventListener('mouseup', () => {
+  clearHighlight();
+});
 
 // ===== Command Modal (Slash Menu) =====
 
