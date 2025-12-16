@@ -20,6 +20,7 @@ Define oscillators to create the sound:
 oscillator main
   wave sine
   octave 0
+  detune 0
   volume 50
   attack time 100
   sustain level 80
@@ -29,6 +30,7 @@ oscillator main
 **Parameters:**
 - `wave` - Waveform type: sine, square, sawtooth, triangle
 - `octave` - Octave offset: -2 to 2
+- `detune` - Fine pitch adjustment in cents: -100 to 100 (100 cents = 1 semitone)
 - `volume` - Volume level: 0 to 100
 - `attack time` - Attack time in milliseconds
 - `sustain level` - Sustain level: 0 to 100
@@ -59,33 +61,41 @@ oscillator main
 
 ### Global Settings
 
+Global settings use section-based syntax with indented parameters.
+
 **Master Volume:**
 ```
-master volume 80
+master
+  volume 80
 ```
 
-**Master Envelope:**
+**Envelope (applies to all notes):**
 ```
-envelope attack time 100
-envelope sustain level 100
-envelope release time 500
-```
-
-**Master Compressor:**
-```
-compressor threshold -20
-compressor ratio 12
-compressor knee 30
-compressor attack 0.003
-compressor release 0.25
+envelope
+  attack time 100
+  sustain level 100
+  release time 500
 ```
 
-**Global Chord:**
+**Compressor:**
 ```
-chord major
+compressor
+  threshold -20
+  ratio 12
+  knee 30
+  attack 0.003
+  release 0.25
 ```
 
-Available chords: none, major, minor, sus2, sus4, maj7, min7, dom7, dim, aug
+**Global Settings (chord and detune):**
+```
+global
+  chord major
+  detune 0
+```
+
+- **chord** - Available chords: none, major, minor, sus2, sus4, maj7, min7, dom7, dim, aug
+- **detune** - Global tuning offset in cents: -100 to 100 (affects all oscillators)
 
 ### Note-Specific Configuration
 
@@ -192,17 +202,19 @@ oscillator main
 oscillator saw1
   wave sawtooth
   octave 0
+  detune -10
   volume 40
 
 oscillator saw2
   wave sawtooth
-  octave -1
-  volume 30
+  octave 0
+  detune 10
+  volume 40
 
 oscillator saw3
   wave sawtooth
-  octave 1
-  volume 25
+  octave -1
+  volume 30
 ```
 
 ### Dynamic Vibrato Control

@@ -118,12 +118,18 @@ let isUpdatingFromText = false;
 const PARAMETER_KEYS = [
   'wave',
   'octave',
+  'detune',
   'volume',
   'pitch',
   'attack time',
   'sustain level',
   'release time',
   'master volume',
+  'threshold',
+  'ratio',
+  'knee',
+  'attack',
+  'release',
   'compressor threshold',
   'compressor ratio',
   'compressor knee',
@@ -219,6 +225,26 @@ function createOscillatorSection(name, index, config) {
   octaveContainer.appendChild(octaveLabel);
   octaveContainer.appendChild(octaveSlider);
   section.appendChild(octaveContainer);
+
+  // Detune slider
+  const detuneContainer = document.createElement('div');
+  detuneContainer.className = 'slider-container';
+  const detuneLabel = document.createElement('label');
+  detuneLabel.textContent = 'detune';
+  const detuneSlider = document.createElement('input');
+  detuneSlider.type = 'range';
+  detuneSlider.min = '-100';
+  detuneSlider.max = '100';
+  detuneSlider.step = '1';
+  detuneSlider.value = config.detune;
+  detuneSlider.addEventListener('input', () => {
+    if (!isUpdatingFromText) {
+      updateParameterInBlocks('detune', detuneSlider.value, index);
+    }
+  });
+  detuneContainer.appendChild(detuneLabel);
+  detuneContainer.appendChild(detuneSlider);
+  section.appendChild(detuneContainer);
 
   // Volume slider
   const volumeContainer = document.createElement('div');
@@ -336,10 +362,10 @@ function createOscillatorSection(name, index, config) {
 function createMasterVolumeSection() {
   const section = document.createElement('div');
   section.className = 'controls-section';
-  section.id = 'master-volume-section';
+  section.id = 'master-section';
 
   const header = document.createElement('h2');
-  header.textContent = 'master volume';
+  header.textContent = 'master';
   if (globalConfig.masterVolume.isDefault) {
     header.classList.add('default-param');
     header.title = 'Using default value (not in document)';
@@ -349,7 +375,7 @@ function createMasterVolumeSection() {
   const container = document.createElement('div');
   container.className = 'slider-container';
   const label = document.createElement('label');
-  label.textContent = 'master volume';
+  label.textContent = 'volume';
   const slider = document.createElement('input');
   slider.type = 'range';
   slider.min = '0';
@@ -369,15 +395,15 @@ function createMasterVolumeSection() {
   return section;
 }
 
-// Create a master envelope section with controls
+// Create an envelope section with controls
 function createMasterEnvelopeSection() {
   const section = document.createElement('div');
   section.className = 'controls-section';
-  section.id = 'master-envelope-section';
+  section.id = 'envelope-section';
 
   const header = document.createElement('h2');
-  header.textContent = 'master envelope';
-  // Mark as default if ALL master envelope params are default
+  header.textContent = 'envelope';
+  // Mark as default if ALL envelope params are default
   const allDefault = globalConfig.masterEnvelope.attack.isDefault &&
                       globalConfig.masterEnvelope.sustain.isDefault &&
                       globalConfig.masterEnvelope.release.isDefault;
@@ -687,6 +713,96 @@ function createChordSection() {
   return section;
 }
 
+// Create global section (includes chord and global detune)
+function createGlobalSection() {
+  const section = document.createElement('div');
+  section.className = 'controls-section';
+  section.id = 'global-section';
+
+  const header = document.createElement('h2');
+  header.textContent = 'global';
+  // Mark as default if ALL global params are default
+  const allDefault = globalConfig.chord.isDefault && globalConfig.detune.isDefault;
+  if (allDefault) {
+    header.classList.add('default-param');
+    header.title = 'Using default values (not in document)';
+  }
+  section.appendChild(header);
+
+  // Chord dropdown
+  const chordContainer = document.createElement('div');
+  chordContainer.className = 'slider-container';
+  const chordLabel = document.createElement('label');
+  chordLabel.textContent = 'chord';
+  chordContainer.appendChild(chordLabel);
+
+  const select = document.createElement('select');
+
+  // Check if current chord is a custom numeric definition
+  const isCustomChord = /^[\d\s\-]+$/.test(globalConfig.chord.value);
+
+  // Dynamically populate from loaded chord definitions
+  const options = Object.keys(CHORD_INTERVALS);
+  options.forEach(optValue => {
+    const option = document.createElement('option');
+    option.value = optValue;
+    option.textContent = optValue;
+    if (optValue === globalConfig.chord.value) {
+      option.selected = true;
+    }
+    select.appendChild(option);
+  });
+
+  // Add "custom" option only if current chord is custom
+  if (isCustomChord) {
+    const customOption = document.createElement('option');
+    customOption.value = 'custom';
+    customOption.textContent = 'custom';
+    customOption.selected = true;
+    select.appendChild(customOption);
+  }
+
+  // Event listener to update text and config
+  select.addEventListener('change', (e) => {
+    if (!isUpdatingFromText) {
+      // Don't update document if "custom" is selected - user must type numeric values directly
+      if (e.target.value !== 'custom') {
+        updateParameterInBlocks('chord', e.target.value);
+        globalConfig.chord.value = e.target.value;
+        globalConfig.chord.isDefault = false;
+      }
+    }
+  });
+
+  chordContainer.appendChild(select);
+  section.appendChild(chordContainer);
+
+  // Global detune slider (-100 to 100 cents)
+  const detuneContainer = document.createElement('div');
+  detuneContainer.className = 'slider-container';
+  const detuneLabel = document.createElement('label');
+  detuneLabel.textContent = 'detune (cents)';
+  const detuneSlider = document.createElement('input');
+  detuneSlider.type = 'range';
+  detuneSlider.min = '-100';
+  detuneSlider.max = '100';
+  detuneSlider.step = '1';
+  detuneSlider.value = globalConfig.detune.value;
+  detuneSlider.addEventListener('input', () => {
+    if (!isUpdatingFromText) {
+      updateParameterInBlocks('global detune', detuneSlider.value);
+    }
+    globalConfig.detune.value = parseFloat(detuneSlider.value);
+    // Need to restart all notes for global detune to take effect
+    polyphonyManager.stopAllNotes();
+  });
+  detuneContainer.appendChild(detuneLabel);
+  detuneContainer.appendChild(detuneSlider);
+  section.appendChild(detuneContainer);
+
+  return section;
+}
+
 // Create LFO section
 function createLFOSection(name, config) {
   const section = document.createElement('div');
@@ -828,6 +944,9 @@ function syncUIFromText() {
   const keysByChar = new Map();
   let currentKeyChar = null;
 
+  // Track current section type for new global sections
+  let currentSection = null; // Can be: 'master', 'envelope', 'compressor', 'global'
+
   // Reset variables
   variables = {};
 
@@ -855,7 +974,8 @@ function syncUIFromText() {
       attack: { value: 0.003, isDefault: true },
       release: { value: 0.25, isDefault: true }
     },
-    chord: { value: 'none', isDefault: true }
+    chord: { value: 'none', isDefault: true },
+    detune: { value: 0, isDefault: true }
   };
 
   lines.forEach(line => {
@@ -868,6 +988,7 @@ function syncUIFromText() {
         oscillatorsByName.set(currentOscillatorName, {
           wave: null,
           octave: null,
+          detune: null,
           volume: null,
           pitch: null,
           attack: null,
@@ -932,6 +1053,43 @@ function syncUIFromText() {
       return;
     }
 
+    // Check for new global section headers (master, envelope, compressor, global)
+    if (line.match(/^master$/i)) {
+      currentSection = 'master';
+      currentOscillatorName = null;
+      currentLFOName = null;
+      currentNoteName = null;
+      currentKeyChar = null;
+      return;
+    }
+
+    if (line.match(/^envelope$/i)) {
+      currentSection = 'envelope';
+      currentOscillatorName = null;
+      currentLFOName = null;
+      currentNoteName = null;
+      currentKeyChar = null;
+      return;
+    }
+
+    if (line.match(/^compressor$/i)) {
+      currentSection = 'compressor';
+      currentOscillatorName = null;
+      currentLFOName = null;
+      currentNoteName = null;
+      currentKeyChar = null;
+      return;
+    }
+
+    if (line.match(/^global$/i)) {
+      currentSection = 'global';
+      currentOscillatorName = null;
+      currentLFOName = null;
+      currentNoteName = null;
+      currentKeyChar = null;
+      return;
+    }
+
     // Handle indented lines
     if (line.startsWith('  ')) {
       const trimmedLine = line.trim();
@@ -955,6 +1113,7 @@ function syncUIFromText() {
 
         if (matchedKey === 'wave') osc.wave = value;
         if (matchedKey === 'octave') osc.octave = parseInt(resolveValue(value));
+        if (matchedKey === 'detune') osc.detune = resolveValue(value);
         if (matchedKey === 'volume') osc.volume = resolveValue(value) / 100;
         if (matchedKey === 'pitch') osc.pitch = value;
         if (matchedKey === 'attack time') osc.attack = resolveValue(value);
@@ -996,6 +1155,85 @@ function syncUIFromText() {
         }
       }
 
+      // If we're in a new global section
+      if (currentSection === 'master') {
+        if (matchedKey === 'volume') {
+          globalConfig.masterVolume = {
+            value: parseFloat(value) / 100,
+            isDefault: false
+          };
+        }
+      }
+
+      if (currentSection === 'envelope') {
+        if (matchedKey === 'attack time') {
+          globalConfig.masterEnvelope.attack = {
+            value: parseFloat(value),
+            isDefault: false
+          };
+        }
+        if (matchedKey === 'sustain level') {
+          globalConfig.masterEnvelope.sustain = {
+            value: parseFloat(value) / 100,
+            isDefault: false
+          };
+        }
+        if (matchedKey === 'release time') {
+          globalConfig.masterEnvelope.release = {
+            value: parseFloat(value),
+            isDefault: false
+          };
+        }
+      }
+
+      if (currentSection === 'compressor') {
+        if (matchedKey === 'threshold') {
+          globalConfig.compressor.threshold = {
+            value: parseFloat(value),
+            isDefault: false
+          };
+        }
+        if (matchedKey === 'ratio') {
+          globalConfig.compressor.ratio = {
+            value: parseFloat(value),
+            isDefault: false
+          };
+        }
+        if (matchedKey === 'knee') {
+          globalConfig.compressor.knee = {
+            value: parseFloat(value),
+            isDefault: false
+          };
+        }
+        if (matchedKey === 'attack') {
+          globalConfig.compressor.attack = {
+            value: parseFloat(value),
+            isDefault: false
+          };
+        }
+        if (matchedKey === 'release') {
+          globalConfig.compressor.release = {
+            value: parseFloat(value),
+            isDefault: false
+          };
+        }
+      }
+
+      if (currentSection === 'global') {
+        if (matchedKey === 'chord') {
+          globalConfig.chord = {
+            value: value,
+            isDefault: false
+          };
+        }
+        if (matchedKey === 'detune') {
+          globalConfig.detune = {
+            value: parseFloat(value),
+            isDefault: false
+          };
+        }
+      }
+
       return;
     }
 
@@ -1005,6 +1243,7 @@ function syncUIFromText() {
       currentLFOName = null;
       currentNoteName = null;
       currentKeyChar = null;
+      currentSection = null;
 
       const trimmedLine = line.trim();
       if (trimmedLine.startsWith('variable ')) {
@@ -1017,58 +1256,8 @@ function syncUIFromText() {
             variables[varName] = varValue;
           }
         }
-      } else if (trimmedLine.startsWith('master volume ')) {
-        globalConfig.masterVolume = {
-          value: parseFloat(trimmedLine.substring('master volume '.length)) / 100,
-          isDefault: false
-        };
-      } else if (trimmedLine.startsWith('envelope attack time ')) {
-        globalConfig.masterEnvelope.attack = {
-          value: parseFloat(trimmedLine.substring('envelope attack time '.length)),
-          isDefault: false
-        };
-      } else if (trimmedLine.startsWith('envelope sustain level ')) {
-        globalConfig.masterEnvelope.sustain = {
-          value: parseFloat(trimmedLine.substring('envelope sustain level '.length)) / 100,
-          isDefault: false
-        };
-      } else if (trimmedLine.startsWith('envelope release time ')) {
-        globalConfig.masterEnvelope.release = {
-          value: parseFloat(trimmedLine.substring('envelope release time '.length)),
-          isDefault: false
-        };
-      } else if (trimmedLine.startsWith('compressor threshold ')) {
-        globalConfig.compressor.threshold = {
-          value: parseFloat(trimmedLine.substring('compressor threshold '.length)),
-          isDefault: false
-        };
-      } else if (trimmedLine.startsWith('compressor ratio ')) {
-        globalConfig.compressor.ratio = {
-          value: parseFloat(trimmedLine.substring('compressor ratio '.length)),
-          isDefault: false
-        };
-      } else if (trimmedLine.startsWith('compressor knee ')) {
-        globalConfig.compressor.knee = {
-          value: parseFloat(trimmedLine.substring('compressor knee '.length)),
-          isDefault: false
-        };
-      } else if (trimmedLine.startsWith('compressor attack ')) {
-        globalConfig.compressor.attack = {
-          value: parseFloat(trimmedLine.substring('compressor attack '.length)),
-          isDefault: false
-        };
-      } else if (trimmedLine.startsWith('compressor release ')) {
-        globalConfig.compressor.release = {
-          value: parseFloat(trimmedLine.substring('compressor release '.length)),
-          isDefault: false
-        };
-      } else if (trimmedLine.startsWith('chord ')) {
-        const chordType = trimmedLine.substring('chord '.length).trim();
-        globalConfig.chord = {
-          value: chordType,
-          isDefault: false
-        };
       }
+      // Old global parameter syntax removed - use new section-based syntax instead
     }
   });
 
@@ -1090,6 +1279,7 @@ function syncUIFromText() {
     const config = {
       wave: osc.wave !== null ? osc.wave : 'sine',
       octave: osc.octave !== null ? osc.octave : 0,
+      detune: osc.detune !== null ? osc.detune : 0,
       volume: osc.volume !== null ? osc.volume : 0.5,
       pitch: osc.pitch !== null ? osc.pitch : null,
       attack: osc.attack !== null ? osc.attack : 100,
@@ -1157,9 +1347,9 @@ function syncUIFromText() {
     const compressorSection = createCompressorSection();
     oscillatorsContainer.appendChild(compressorSection);
 
-    // Create chord section
-    const chordSection = createChordSection();
-    oscillatorsContainer.appendChild(chordSection);
+    // Create global section (includes chord and global detune)
+    const globalSection = createGlobalSection();
+    oscillatorsContainer.appendChild(globalSection);
 
     // Create variables section (if there are any variables)
     const variablesSection = createVariablesSection();
@@ -1276,6 +1466,9 @@ class Note {
         const octaveMultiplier = Math.pow(2, config.octave);
         const baseFrequency = frequency * octaveMultiplier;
         osc.frequency.value = baseFrequency;
+
+        // Apply detune (oscillator detune + global detune in cents)
+        osc.detune.value = config.detune + globalConfig.detune.value;
 
         // Store base frequency for dynamic LFO application
         this.baseFrequencies.push(baseFrequency);
@@ -1683,6 +1876,34 @@ function formatBlock(block) {
     return;
   }
 
+  // Check if this is a master section header
+  if (trimmed.match(/^master$/i)) {
+    content.innerHTML = `${leadingSpaces}<span class="syntax-key">master</span>`;
+    setCursorPositionInBlock(content, cursorPos);
+    return;
+  }
+
+  // Check if this is an envelope section header
+  if (trimmed.match(/^envelope$/i)) {
+    content.innerHTML = `${leadingSpaces}<span class="syntax-key">envelope</span>`;
+    setCursorPositionInBlock(content, cursorPos);
+    return;
+  }
+
+  // Check if this is a compressor section header
+  if (trimmed.match(/^compressor$/i)) {
+    content.innerHTML = `${leadingSpaces}<span class="syntax-key">compressor</span>`;
+    setCursorPositionInBlock(content, cursorPos);
+    return;
+  }
+
+  // Check if this is a global section header
+  if (trimmed.match(/^global$/i)) {
+    content.innerHTML = `${leadingSpaces}<span class="syntax-key">global</span>`;
+    setCursorPositionInBlock(content, cursorPos);
+    return;
+  }
+
   // Check if this is a variable line (definition or incomplete)
   if (trimmed.startsWith('variable ')) {
     const afterVariable = trimmed.substring('variable '.length);
@@ -1829,6 +2050,25 @@ function focusBlock(blockElement, atEnd = false) {
 function initializeBlocks() {
   const initialLines = [];
 
+  // Add global parameters first using new section-based syntax
+  initialLines.push('master');
+  initialLines.push(`  volume ${globalConfig.masterVolume.value * 100}`);
+  initialLines.push('');
+
+  initialLines.push('envelope');
+  initialLines.push(`  attack time ${globalConfig.masterEnvelope.attack.value}`);
+  initialLines.push(`  sustain level ${globalConfig.masterEnvelope.sustain.value * 100}`);
+  initialLines.push(`  release time ${globalConfig.masterEnvelope.release.value}`);
+  initialLines.push('');
+
+  initialLines.push('compressor');
+  initialLines.push(`  threshold ${globalConfig.compressor.threshold.value}`);
+  initialLines.push(`  ratio ${globalConfig.compressor.ratio.value}`);
+  initialLines.push(`  knee ${globalConfig.compressor.knee.value}`);
+  initialLines.push(`  attack ${globalConfig.compressor.attack.value}`);
+  initialLines.push(`  release ${globalConfig.compressor.release.value}`);
+  initialLines.push('');
+
   // Add oscillator lines from initial config
   oscillatorNames.forEach((name, index) => {
     if (index < oscillatorConfigs.length) {
@@ -1843,17 +2083,6 @@ function initializeBlocks() {
       initialLines.push(''); // Empty line between oscillators
     }
   });
-
-  // Add global parameters from config
-  initialLines.push(`master volume ${globalConfig.masterVolume.value * 100}`);
-  initialLines.push(`envelope attack time ${globalConfig.masterEnvelope.attack.value}`);
-  initialLines.push(`envelope sustain level ${globalConfig.masterEnvelope.sustain.value * 100}`);
-  initialLines.push(`envelope release time ${globalConfig.masterEnvelope.release.value}`);
-  initialLines.push(`compressor threshold ${globalConfig.compressor.threshold.value}`);
-  initialLines.push(`compressor ratio ${globalConfig.compressor.ratio.value}`);
-  initialLines.push(`compressor knee ${globalConfig.compressor.knee.value}`);
-  initialLines.push(`compressor attack ${globalConfig.compressor.attack.value}`);
-  initialLines.push(`compressor release ${globalConfig.compressor.release.value}`);
 
   parametersTextbox.contentEditable = 'true';
   parametersTextbox.innerHTML = '';
@@ -1935,12 +2164,87 @@ function updateParameterInBlocks(parameterName, newValue, oscIndex = -1) {
         }
       }
     } else {
-      // Looking for global parameter (non-indented)
+      // Looking for global parameter (could be in a section or non-indented for old syntax)
+
+      // Check for section headers to track current section
+      if (text.match(/^(master|envelope|compressor|global)$/i)) {
+        const sectionType = text.trim().toLowerCase();
+
+        // Look ahead for indented parameters in this section
+        let nextBlockIndex = blocks.indexOf(block) + 1;
+        while (nextBlockIndex < blocks.length) {
+          const nextBlock = blocks[nextBlockIndex];
+          const nextContent = nextBlock.querySelector('.block-content');
+          if (!nextContent) {
+            nextBlockIndex++;
+            continue;
+          }
+
+          const nextText = nextContent.textContent;
+
+          // Stop if we hit a non-indented line (next section or global param)
+          if (!nextText.startsWith('  ')) break;
+
+          const nextTrimmed = nextText.trim();
+
+          // Check if this matches the parameter we're looking for
+          let shouldUpdate = false;
+
+          if (sectionType === 'master' && parameterName === 'master volume' && nextTrimmed.startsWith('volume ')) {
+            shouldUpdate = true;
+            nextContent.textContent = `  volume ${newValue}`;
+          } else if (sectionType === 'envelope') {
+            if (parameterName === 'envelope attack time' && nextTrimmed.startsWith('attack time ')) {
+              shouldUpdate = true;
+              nextContent.textContent = `  attack time ${newValue}`;
+            } else if (parameterName === 'envelope sustain level' && nextTrimmed.startsWith('sustain level ')) {
+              shouldUpdate = true;
+              nextContent.textContent = `  sustain level ${newValue}`;
+            } else if (parameterName === 'envelope release time' && nextTrimmed.startsWith('release time ')) {
+              shouldUpdate = true;
+              nextContent.textContent = `  release time ${newValue}`;
+            }
+          } else if (sectionType === 'compressor') {
+            if (parameterName === 'compressor threshold' && nextTrimmed.startsWith('threshold ')) {
+              shouldUpdate = true;
+              nextContent.textContent = `  threshold ${newValue}`;
+            } else if (parameterName === 'compressor ratio' && nextTrimmed.startsWith('ratio ')) {
+              shouldUpdate = true;
+              nextContent.textContent = `  ratio ${newValue}`;
+            } else if (parameterName === 'compressor knee' && nextTrimmed.startsWith('knee ')) {
+              shouldUpdate = true;
+              nextContent.textContent = `  knee ${newValue}`;
+            } else if (parameterName === 'compressor attack' && nextTrimmed.startsWith('attack ')) {
+              shouldUpdate = true;
+              nextContent.textContent = `  attack ${newValue}`;
+            } else if (parameterName === 'compressor release' && nextTrimmed.startsWith('release ')) {
+              shouldUpdate = true;
+              nextContent.textContent = `  release ${newValue}`;
+            }
+          } else if (sectionType === 'global') {
+            if (parameterName === 'chord' && nextTrimmed.startsWith('chord ')) {
+              shouldUpdate = true;
+              nextContent.textContent = `  chord ${newValue}`;
+            } else if (parameterName === 'global detune' && nextTrimmed.startsWith('detune ')) {
+              shouldUpdate = true;
+              nextContent.textContent = `  detune ${newValue}`;
+            }
+          }
+
+          if (shouldUpdate) {
+            formatBlock(nextBlock);
+            scrollToAndPulse(nextBlock, true);
+            return;
+          }
+
+          nextBlockIndex++;
+        }
+      }
+
+      // Fallback: old non-indented global parameter syntax (for backwards compatibility during transition)
       if (!text.startsWith(' ') && text.startsWith(parameterName + ' ')) {
         content.textContent = `${parameterName} ${newValue}`;
         formatBlock(block);
-
-        // Scroll to and persist highlight while dragging
         scrollToAndPulse(block, true);
         return;
       }
@@ -2524,11 +2828,11 @@ parametersTextbox.addEventListener("keydown", (e) => {
   // Insert after current block
   currentBlock.parentNode.insertBefore(newBlock, currentBlock.nextSibling);
 
-  // Format the new block
-  formatBlock(newBlock);
-
-  // Focus new block
+  // Focus new block BEFORE formatting to ensure cursor is at the beginning
   focusBlock(newBlock);
+
+  // Format the new block (will preserve the cursor position we just set)
+  formatBlock(newBlock);
 });
 
 // Handle Backspace at beginning to merge with previous block
@@ -2988,6 +3292,233 @@ const commands = [
       // Position cursor at the end of the LFO name
       const lfoContent = lfoHeaderBlock.querySelector('.block-content');
       setCursorToEnd(lfoContent);
+    }
+  },
+  {
+    name: "New Key",
+    description: "Create a new key definition for dynamic modulation",
+    action: () => {
+      const targetBlock = slashBlock;
+
+      // Create the new key blocks
+      const keyHeaderBlock = createBlock(`key f`);
+      const pitchBlock = createBlock(`  pitch vibrato`);
+
+      // Insert the blocks
+      if (targetBlock) {
+        targetBlock.insertAdjacentElement('afterend', pitchBlock);
+        targetBlock.insertAdjacentElement('afterend', keyHeaderBlock);
+      } else {
+        parametersTextbox.appendChild(keyHeaderBlock);
+        parametersTextbox.appendChild(pitchBlock);
+      }
+
+      // Format and sync
+      formatBlock(keyHeaderBlock);
+      formatBlock(pitchBlock);
+      syncUIFromText();
+
+      // Position cursor at the end of the key character
+      const keyContent = keyHeaderBlock.querySelector('.block-content');
+      setCursorToEnd(keyContent);
+    }
+  },
+  {
+    name: "New Note",
+    description: "Create a note-specific configuration",
+    action: () => {
+      const targetBlock = slashBlock;
+
+      // Create the new note blocks
+      const noteHeaderBlock = createBlock(`note c4`);
+      const pitchBlock = createBlock(`  pitch vibrato`);
+
+      // Insert the blocks
+      if (targetBlock) {
+        targetBlock.insertAdjacentElement('afterend', pitchBlock);
+        targetBlock.insertAdjacentElement('afterend', noteHeaderBlock);
+      } else {
+        parametersTextbox.appendChild(noteHeaderBlock);
+        parametersTextbox.appendChild(pitchBlock);
+      }
+
+      // Format and sync
+      formatBlock(noteHeaderBlock);
+      formatBlock(pitchBlock);
+      syncUIFromText();
+
+      // Position cursor at the end of the note name
+      const noteContent = noteHeaderBlock.querySelector('.block-content');
+      setCursorToEnd(noteContent);
+    }
+  },
+  {
+    name: "New Variable",
+    description: "Create a reusable variable",
+    action: () => {
+      const targetBlock = slashBlock;
+
+      // Create the new variable block
+      const variableBlock = createBlock(`variable myvar 100`);
+
+      // Insert the block
+      if (targetBlock) {
+        targetBlock.insertAdjacentElement('afterend', variableBlock);
+      } else {
+        parametersTextbox.appendChild(variableBlock);
+      }
+
+      // Format and sync
+      formatBlock(variableBlock);
+      syncUIFromText();
+
+      // Position cursor at the end of the variable name
+      const variableContent = variableBlock.querySelector('.block-content');
+      setCursorToEnd(variableContent);
+    }
+  },
+  {
+    name: "New Master",
+    description: "Create a master volume section",
+    action: () => {
+      const targetBlock = slashBlock;
+
+      // Create the new master blocks
+      const masterHeaderBlock = createBlock(`master`);
+      const volumeBlock = createBlock(`  volume 80`);
+
+      // Insert the blocks
+      if (targetBlock) {
+        targetBlock.insertAdjacentElement('afterend', volumeBlock);
+        targetBlock.insertAdjacentElement('afterend', masterHeaderBlock);
+      } else {
+        parametersTextbox.appendChild(masterHeaderBlock);
+        parametersTextbox.appendChild(volumeBlock);
+      }
+
+      // Format and sync
+      formatBlock(masterHeaderBlock);
+      formatBlock(volumeBlock);
+      syncUIFromText();
+
+      // Position cursor at the end of the volume value
+      const volumeContent = volumeBlock.querySelector('.block-content');
+      setCursorToEnd(volumeContent);
+    }
+  },
+  {
+    name: "New Envelope",
+    description: "Create a global envelope section",
+    action: () => {
+      const targetBlock = slashBlock;
+
+      // Create the new envelope blocks
+      const envelopeHeaderBlock = createBlock(`envelope`);
+      const attackBlock = createBlock(`  attack time 100`);
+      const sustainBlock = createBlock(`  sustain level 100`);
+      const releaseBlock = createBlock(`  release time 500`);
+
+      // Insert the blocks
+      if (targetBlock) {
+        targetBlock.insertAdjacentElement('afterend', releaseBlock);
+        targetBlock.insertAdjacentElement('afterend', sustainBlock);
+        targetBlock.insertAdjacentElement('afterend', attackBlock);
+        targetBlock.insertAdjacentElement('afterend', envelopeHeaderBlock);
+      } else {
+        parametersTextbox.appendChild(envelopeHeaderBlock);
+        parametersTextbox.appendChild(attackBlock);
+        parametersTextbox.appendChild(sustainBlock);
+        parametersTextbox.appendChild(releaseBlock);
+      }
+
+      // Format and sync
+      formatBlock(envelopeHeaderBlock);
+      formatBlock(attackBlock);
+      formatBlock(sustainBlock);
+      formatBlock(releaseBlock);
+      syncUIFromText();
+
+      // Position cursor at the envelope header
+      const envelopeContent = envelopeHeaderBlock.querySelector('.block-content');
+      setCursorToEnd(envelopeContent);
+    }
+  },
+  {
+    name: "New Compressor",
+    description: "Create a compressor section",
+    action: () => {
+      const targetBlock = slashBlock;
+
+      // Create the new compressor blocks
+      const compressorHeaderBlock = createBlock(`compressor`);
+      const thresholdBlock = createBlock(`  threshold -20`);
+      const ratioBlock = createBlock(`  ratio 12`);
+      const kneeBlock = createBlock(`  knee 30`);
+      const attackBlock = createBlock(`  attack 0.003`);
+      const releaseBlock = createBlock(`  release 0.25`);
+
+      // Insert the blocks
+      if (targetBlock) {
+        targetBlock.insertAdjacentElement('afterend', releaseBlock);
+        targetBlock.insertAdjacentElement('afterend', attackBlock);
+        targetBlock.insertAdjacentElement('afterend', kneeBlock);
+        targetBlock.insertAdjacentElement('afterend', ratioBlock);
+        targetBlock.insertAdjacentElement('afterend', thresholdBlock);
+        targetBlock.insertAdjacentElement('afterend', compressorHeaderBlock);
+      } else {
+        parametersTextbox.appendChild(compressorHeaderBlock);
+        parametersTextbox.appendChild(thresholdBlock);
+        parametersTextbox.appendChild(ratioBlock);
+        parametersTextbox.appendChild(kneeBlock);
+        parametersTextbox.appendChild(attackBlock);
+        parametersTextbox.appendChild(releaseBlock);
+      }
+
+      // Format and sync
+      formatBlock(compressorHeaderBlock);
+      formatBlock(thresholdBlock);
+      formatBlock(ratioBlock);
+      formatBlock(kneeBlock);
+      formatBlock(attackBlock);
+      formatBlock(releaseBlock);
+      syncUIFromText();
+
+      // Position cursor at the compressor header
+      const compressorContent = compressorHeaderBlock.querySelector('.block-content');
+      setCursorToEnd(compressorContent);
+    }
+  },
+  {
+    name: "New Global",
+    description: "Create a global settings section (chord and detune)",
+    action: () => {
+      const targetBlock = slashBlock;
+
+      // Create the new global blocks
+      const globalHeaderBlock = createBlock(`global`);
+      const chordBlock = createBlock(`  chord none`);
+      const detuneBlock = createBlock(`  detune 0`);
+
+      // Insert the blocks
+      if (targetBlock) {
+        targetBlock.insertAdjacentElement('afterend', detuneBlock);
+        targetBlock.insertAdjacentElement('afterend', chordBlock);
+        targetBlock.insertAdjacentElement('afterend', globalHeaderBlock);
+      } else {
+        parametersTextbox.appendChild(globalHeaderBlock);
+        parametersTextbox.appendChild(chordBlock);
+        parametersTextbox.appendChild(detuneBlock);
+      }
+
+      // Format and sync
+      formatBlock(globalHeaderBlock);
+      formatBlock(chordBlock);
+      formatBlock(detuneBlock);
+      syncUIFromText();
+
+      // Position cursor at the global header
+      const globalContent = globalHeaderBlock.querySelector('.block-content');
+      setCursorToEnd(globalContent);
     }
   },
   {
