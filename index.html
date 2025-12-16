@@ -25,7 +25,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Clarity</title>
+  <title>clarity</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Hammersmith+One&display=swap" rel="stylesheet">
@@ -45,6 +45,64 @@
       <div id="note-display" class="note-display">
         <span id="note-display-text">--</span>
       </div>
+
+      <!-- Virtual Keyboard Panel -->
+      <div class="controls-section keyboard-panel">
+        <div id="virtual-keyboard" tabindex="0">
+          <div class="keyboard-hint">Click here, then use keyboard to play</div>
+          <div class="keyboard-layout">
+            <div class="keyboard-row">
+              <span class="key-label" data-key="1">1</span>
+              <span class="key-label" data-key="2">2</span>
+              <span class="key-label" data-key="3">3</span>
+              <span class="key-label" data-key="4">4</span>
+              <span class="key-label" data-key="5">5</span>
+              <span class="key-label" data-key="6">6</span>
+              <span class="key-label" data-key="7">7</span>
+              <span class="key-label" data-key="8">8</span>
+              <span class="key-label" data-key="9">9</span>
+              <span class="key-label" data-key="0">0</span>
+            </div>
+            <div class="keyboard-row">
+              <span class="key-label" data-key="q">Q</span>
+              <span class="key-label" data-key="w">W</span>
+              <span class="key-label" data-key="e">E</span>
+              <span class="key-label" data-key="r">R</span>
+              <span class="key-label" data-key="t">T</span>
+              <span class="key-label" data-key="y">Y</span>
+              <span class="key-label" data-key="u">U</span>
+              <span class="key-label" data-key="i">I</span>
+              <span class="key-label" data-key="o">O</span>
+              <span class="key-label" data-key="p">P</span>
+            </div>
+            <div class="keyboard-row">
+              <span class="key-label" data-key="a">A</span>
+              <span class="key-label" data-key="s">S</span>
+              <span class="key-label" data-key="d">D</span>
+              <span class="key-label" data-key="f">F</span>
+              <span class="key-label" data-key="g">G</span>
+              <span class="key-label" data-key="h">H</span>
+              <span class="key-label" data-key="j">J</span>
+              <span class="key-label" data-key="k">K</span>
+              <span class="key-label" data-key="l">L</span>
+              <span class="key-label" data-key=";">;</span>
+            </div>
+            <div class="keyboard-row">
+              <span class="key-label" data-key="z">Z</span>
+              <span class="key-label" data-key="x">X</span>
+              <span class="key-label" data-key="c">C</span>
+              <span class="key-label" data-key="v">V</span>
+              <span class="key-label" data-key="b">B</span>
+              <span class="key-label" data-key="n">N</span>
+              <span class="key-label" data-key="m">M</span>
+              <span class="key-label" data-key=",">,</span>
+              <span class="key-label" data-key=".">.</span>
+              <span class="key-label" data-key="/">/</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Dynamic oscillator sections generated from text -->
       <div id="oscillators-container"></div>
 

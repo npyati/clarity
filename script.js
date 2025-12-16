@@ -73,6 +73,10 @@ let lfoConfigs = {};
 // Format: { noteName: { pitch: lfoName } }
 let noteConfigs = {};
 
+// Key-specific configurations - dynamically updated from text box
+// Format: { key: { pitch: lfoName } }
+let keyConfigs = {};
+
 // Global configuration - dynamically updated from text box
 let globalConfig = {
   masterVolume: { value: 0.8, isDefault: true },
@@ -820,6 +824,10 @@ function syncUIFromText() {
   const notesByName = new Map();
   let currentNoteName = null;
 
+  // Track keys by key character
+  const keysByChar = new Map();
+  let currentKeyChar = null;
+
   // Reset variables
   variables = {};
 
@@ -828,6 +836,9 @@ function syncUIFromText() {
 
   // Reset note configs
   noteConfigs = {};
+
+  // Reset key configs
+  keyConfigs = {};
 
   // Reset global config to defaults
   globalConfig = {
@@ -904,6 +915,23 @@ function syncUIFromText() {
       return;
     }
 
+    // Check if this is a key heading (not indented, starts with "key ")
+    const keyMatch = line.match(/^key\s+(.+)$/i);
+    if (keyMatch) {
+      const keyChar = keyMatch[1].trim().toLowerCase();
+      currentKeyChar = keyChar;
+      currentOscillatorName = null;
+      currentLFOName = null;
+      currentNoteName = null;
+
+      if (!keysByChar.has(keyChar)) {
+        keysByChar.set(keyChar, {
+          pitch: null
+        });
+      }
+      return;
+    }
+
     // Handle indented lines
     if (line.startsWith('  ')) {
       const trimmedLine = line.trim();
@@ -958,6 +986,16 @@ function syncUIFromText() {
         });
       }
 
+      // If we're in a key block
+      if (currentKeyChar) {
+        const key = keysByChar.get(currentKeyChar);
+        if (key) {
+          if (matchedKey === 'pitch') {
+            key.pitch = value;
+          }
+        }
+      }
+
       return;
     }
 
@@ -966,6 +1004,7 @@ function syncUIFromText() {
       currentOscillatorName = null;
       currentLFOName = null;
       currentNoteName = null;
+      currentKeyChar = null;
 
       const trimmedLine = line.trim();
       if (trimmedLine.startsWith('variable ')) {
@@ -1077,6 +1116,16 @@ function syncUIFromText() {
     };
   });
 
+  // Populate keyConfigs from parsed keys
+  keysByChar.forEach((key, keyChar) => {
+    keyConfigs[keyChar] = {
+      pitch: key.pitch
+    };
+  });
+
+  // Update visual keyboard to highlight keys with definitions
+  updateKeyboardHighlights();
+
   // Dynamically generate UI sections for ALL oscillators AND global parameters
   const oscillatorsContainer = document.getElementById('oscillators-container');
   if (oscillatorsContainer) {
@@ -1118,16 +1167,7 @@ function syncUIFromText() {
       oscillatorsContainer.appendChild(variablesSection);
     }
 
-    // Create virtual keyboard section (always present)
-    const keyboardSection = document.createElement('div');
-    keyboardSection.className = 'controls-section';
-    keyboardSection.innerHTML = `
-      <h2>Virtual Keyboard</h2>
-      <div id="virtual-keyboard" tabindex="0">
-        <div class="keyboard-hint">Click here, then use keyboard to play</div>
-      </div>
-    `;
-    oscillatorsContainer.appendChild(keyboardSection);
+    // Virtual keyboard is now defined in HTML, no need to create it dynamically
   }
 
   // Apply global config to audio engine
@@ -1151,11 +1191,11 @@ class PolyphonyManager {
     this.activeNotes = new Map();
   }
 
-  startNote(frequency, noteId, velocity = 127, isSynthetic = false, midiNote = null) {
+  startNote(frequency, noteId, velocity = 127, isSynthetic = false, midiNote = null, keyChar = null) {
     if (this.activeNotes.has(noteId)) {
       this.stopNote(noteId);
     }
-    const note = new Note(frequency, noteId, this, isSynthetic, midiNote);
+    const note = new Note(frequency, noteId, this, isSynthetic, midiNote, keyChar);
     this.activeNotes.set(noteId, note);
     note.start(velocity);
     updateNoteDisplay();
@@ -1179,12 +1219,13 @@ class PolyphonyManager {
 
 // Encapsulated Note class with multiple oscillators, each with independent envelope
 class Note {
-  constructor(frequency, noteId, manager, isSynthetic = false, midiNote = null) {
+  constructor(frequency, noteId, manager, isSynthetic = false, midiNote = null, keyChar = null) {
     this.frequency = frequency;
     this.noteId = noteId;
     this.manager = manager;
     this.isSynthetic = isSynthetic;
     this.midiNote = midiNote;
+    this.keyChar = keyChar;
 
     // Convert MIDI note to note name for note-specific config lookup
     let noteSpecificConfig = null;
@@ -1201,6 +1242,14 @@ class Note {
       }
     }
 
+    // Get key-specific config from any active defined keys being held
+    // If multiple defined keys are held, use the first one's config
+    let keySpecificConfig = null;
+    if (activeDefinedKeys.size > 0) {
+      const firstDefinedKey = activeDefinedKeys.values().next().value;
+      keySpecificConfig = keyConfigs[firstDefinedKey];
+    }
+
     // Create master envelope gain node (applies to all oscillators)
     this.masterEnvelopeGain = audioContext.createGain();
     this.masterEnvelopeGain.gain.setValueAtTime(0, audioContext.currentTime);
@@ -1212,6 +1261,8 @@ class Note {
     this.oscillatorEnvelopes = []; // Each oscillator's envelope gain node
     this.configs = []; // Store config for each oscillator for stop()
     this.lfos = []; // Store LFO oscillators for cleanup
+    this.keyLfos = []; // Store dynamically added LFOs from key presses
+    this.baseFrequencies = []; // Store base frequencies for dynamic LFO application
 
     oscillatorConfigs.forEach((config) => {
       if (config.volume > 0) { // Only create if volume > 0
@@ -1226,8 +1277,13 @@ class Note {
         const baseFrequency = frequency * octaveMultiplier;
         osc.frequency.value = baseFrequency;
 
-        // Determine which pitch LFO to use (note-specific overrides oscillator config)
-        const pitchLFO = (noteSpecificConfig && noteSpecificConfig.pitch) || config.pitch;
+        // Store base frequency for dynamic LFO application
+        this.baseFrequencies.push(baseFrequency);
+
+        // Determine which pitch LFO to use (key-specific > note-specific > oscillator config)
+        const pitchLFO = (keySpecificConfig && keySpecificConfig.pitch) ||
+                        (noteSpecificConfig && noteSpecificConfig.pitch) ||
+                        config.pitch;
 
         // Check if this oscillator has pitch modulation (LFO)
         if (pitchLFO && lfoConfigs[pitchLFO]) {
@@ -1342,6 +1398,17 @@ class Note {
         }
       });
 
+      // Stop and disconnect all key LFOs
+      this.keyLfos.forEach(({ lfo, depthGain }) => {
+        if (lfo) {
+          lfo.stop();
+          lfo.disconnect();
+        }
+        if (depthGain) {
+          depthGain.disconnect();
+        }
+      });
+
       // Disconnect all envelope gains
       this.oscillatorEnvelopes.forEach(gain => {
         if (gain) {
@@ -1354,6 +1421,55 @@ class Note {
         this.masterEnvelopeGain.disconnect();
       }
     }, totalReleaseTime * 1000);
+  }
+
+  // Add a key-specific LFO to all oscillators dynamically
+  addKeyLFO(lfoName) {
+    if (!lfoConfigs[lfoName]) return;
+
+    // Clear any existing key LFOs first
+    this.removeKeyLFO();
+
+    const lfoConfig = lfoConfigs[lfoName];
+
+    // Apply LFO to each oscillator
+    this.oscillators.forEach((osc, index) => {
+      const baseFrequency = this.baseFrequencies[index];
+
+      // Create LFO oscillator
+      const lfo = audioContext.createOscillator();
+      lfo.type = lfoConfig.wave;
+      lfo.frequency.value = lfoConfig.rate;
+
+      // Create gain node to scale LFO output
+      const depthGain = audioContext.createGain();
+      const depthInHz = baseFrequency * (lfoConfig.depth / 1200);
+      depthGain.gain.value = depthInHz;
+
+      // Connect: LFO → depth gain → oscillator frequency
+      lfo.connect(depthGain);
+      depthGain.connect(osc.frequency);
+
+      // Start LFO immediately
+      lfo.start();
+
+      // Store for cleanup
+      this.keyLfos.push({ lfo, depthGain });
+    });
+  }
+
+  // Remove all key-specific LFOs
+  removeKeyLFO() {
+    this.keyLfos.forEach(({ lfo, depthGain }) => {
+      if (lfo) {
+        lfo.stop();
+        lfo.disconnect();
+      }
+      if (depthGain) {
+        depthGain.disconnect();
+      }
+    });
+    this.keyLfos = [];
   }
 }
 
@@ -1544,6 +1660,21 @@ function formatBlock(block) {
     content.innerHTML = `${leadingSpaces}<span class="syntax-key">note</span> <span class="syntax-oscillator">${noteName}</span>`;
 
     // Preserve any trailing space after the note name
+    if (text.endsWith(' ') && !trimmed.endsWith(' ')) {
+      content.appendChild(document.createTextNode(' '));
+    }
+
+    setCursorPositionInBlock(content, cursorPos);
+    return;
+  }
+
+  // Check if this is a key header line (e.g., "key f")
+  const keyMatch = trimmed.match(/^key\s+(.+)$/i);
+  if (keyMatch) {
+    const keyName = keyMatch[1];
+    content.innerHTML = `${leadingSpaces}<span class="syntax-key">key</span> <span class="syntax-oscillator">${keyName}</span>`;
+
+    // Preserve any trailing space after the key name
     if (text.endsWith(' ') && !trimmed.endsWith(' ')) {
       content.appendChild(document.createTextNode(' '));
     }
@@ -2525,7 +2656,28 @@ function handleMIDIMessage(message) {
 }
 
 // Virtual Keyboard Support
+// Update keyboard visual highlights based on key definitions
+function updateKeyboardHighlights() {
+  // Remove all has-definition classes first
+  document.querySelectorAll('.key-label').forEach(keyElement => {
+    keyElement.classList.remove('has-definition');
+  });
+
+  // Add has-definition class to keys with configurations
+  Object.keys(keyConfigs).forEach(keyChar => {
+    const keyConfig = keyConfigs[keyChar];
+    // Only highlight if there's actually a configuration (e.g., pitch LFO)
+    if (keyConfig.pitch) {
+      const keyElement = document.querySelector(`.key-label[data-key="${keyChar}"]`);
+      if (keyElement) {
+        keyElement.classList.add('has-definition');
+      }
+    }
+  });
+}
+
 const activeKeys = new Set();
+const activeDefinedKeys = new Set(); // Track keys with definitions that are currently held
 
 // Keyboard to MIDI note mapping - chromatic layout starting from C3
 const keyToNote = {
@@ -2565,13 +2717,32 @@ document.addEventListener("keydown", (e) => {
     e.stopPropagation();
     activeKeys.add(key);
 
+    // Highlight the key visually
+    const keyElement = document.querySelector(`.key-label[data-key="${key}"]`);
+    if (keyElement) {
+      keyElement.classList.add('active');
+    }
+
+    // If this key has a definition (like an LFO assignment), track it but don't play notes
+    if (keyConfigs[key] && keyConfigs[key].pitch) {
+      activeDefinedKeys.add(key);
+
+      // Apply this key's LFO to all currently active notes
+      const lfoName = keyConfigs[key].pitch;
+      polyphonyManager.activeNotes.forEach(note => {
+        note.addKeyLFO(lfoName);
+      });
+
+      return;
+    }
+
     const rootFrequency = 440 * Math.pow(2, (midiNote - 69) / 12);
     const frequencies = getChordFrequencies(rootFrequency, midiNote);
 
     frequencies.forEach((freq, index) => {
       const noteId = `keyboard-${key}-${index}`;
       const isSynthetic = index > 0; // First note (index 0) is root, rest are synthetic
-      polyphonyManager.startNote(freq, noteId, 100, isSynthetic, midiNote);
+      polyphonyManager.startNote(freq, noteId, 100, isSynthetic, midiNote, key);
     });
   }
 });
@@ -2587,6 +2758,21 @@ document.addEventListener("keyup", (e) => {
     e.preventDefault();
     e.stopPropagation();
     activeKeys.delete(key);
+    activeDefinedKeys.delete(key); // Remove from defined keys tracking
+
+    // Remove highlight from the key
+    const keyElement = document.querySelector(`.key-label[data-key="${key}"]`);
+    if (keyElement) {
+      keyElement.classList.remove('active');
+    }
+
+    // If this key has a definition, remove its LFO from all active notes
+    if (keyConfigs[key] && keyConfigs[key].pitch) {
+      polyphonyManager.activeNotes.forEach(note => {
+        note.removeKeyLFO();
+      });
+      return;
+    }
 
     const rootFrequency = 440 * Math.pow(2, (midiNote - 69) / 12);
     const frequencies = getChordFrequencies(rootFrequency, midiNote);
@@ -2603,8 +2789,15 @@ document.addEventListener("blur", (e) => {
     activeKeys.forEach(key => {
       const noteId = `keyboard-${key}`;
       polyphonyManager.stopNote(noteId);
+
+      // Remove highlight from the key
+      const keyElement = document.querySelector(`.key-label[data-key="${key}"]`);
+      if (keyElement) {
+        keyElement.classList.remove('active');
+      }
     });
     activeKeys.clear();
+    activeDefinedKeys.clear();
   }
 }, true);
 

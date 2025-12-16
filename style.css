@@ -243,7 +243,21 @@ input[type="range"]::-moz-range-thumb:hover {
   background: #4a4e54;
 }
 
-/* Virtual Keyboard */
+/* Virtual Keyboard Panel */
+.keyboard-panel {
+  position: sticky;
+  top: 60px;
+  z-index: 90;
+  background: #1d1f21;
+  padding: 15px;
+  margin: 0 -20px 10px -20px;
+  border-bottom: 1px solid #373b41;
+}
+
+.keyboard-panel h2 {
+  margin-bottom: 12px;
+}
+
 #virtual-keyboard {
   background: #282a2e;
   border: 2px solid #373b41;
@@ -273,18 +287,49 @@ input[type="range"]::-moz-range-thumb:hover {
 .keyboard-layout {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .keyboard-row {
-  text-align: center;
+  display: flex;
+  justify-content: center;
+  gap: 4px;
 }
 
 .key-label {
   font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
-  font-size: 10px;
+  font-size: 11px;
   color: #5fd3bc;
-  letter-spacing: 4px;
+  background: #373b41;
+  border: 1px solid #4a4e54;
+  border-radius: 3px;
+  padding: 6px 8px;
+  min-width: 20px;
+  text-align: center;
+  transition: all 0.1s ease;
+  user-select: none;
+}
+
+.key-label.active {
+  background: #ff8c66;
+  color: #1d1f21;
+  border-color: #ffa07a;
+  transform: translateY(1px);
+  box-shadow: 0 0 8px rgba(255, 140, 102, 0.4);
+}
+
+.key-label.has-definition {
+  background: #5a3a2a;
+  border-color: #ff8c66;
+  color: #ff8c66;
+  box-shadow: 0 0 6px rgba(255, 140, 102, 0.4);
+  font-weight: bold;
+}
+
+.key-label.has-definition.active {
+  background: #ff8c66;
+  border-color: #ffa07a;
+  box-shadow: 0 0 8px rgba(255, 140, 102, 0.4);
 }
 
 /* Command Modal */
