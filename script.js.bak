@@ -58,9 +58,6 @@
 // All component definitions are in schemas.js
 // ============================================================================
 
-// Parameter keys for syntax highlighting
-let PARAMETER_KEYS = [];
-
 // Initialize systems (will be called after page load)
 function initializeNewArchitecture() {
   // Initialize chord values from chords.js
@@ -68,34 +65,6 @@ function initializeNewArchitecture() {
 
   // Build chord intervals (still needed for note playback)
   buildChordIntervals();
-
-  // Build PARAMETER_KEYS from schemas
-  PARAMETER_KEYS = [];
-
-  // Add all component attributes
-  for (const componentType in COMPONENT_SCHEMAS) {
-    const schema = COMPONENT_SCHEMAS[componentType];
-    for (const attrName in schema.attributes) {
-      if (!PARAMETER_KEYS.includes(attrName)) {
-        PARAMETER_KEYS.push(attrName);
-      }
-    }
-  }
-
-  // Add all trigger attributes
-  for (const triggerType in TRIGGER_SCHEMAS) {
-    const schema = TRIGGER_SCHEMAS[triggerType];
-    for (const attrName in schema.attributes) {
-      if (!PARAMETER_KEYS.includes(attrName)) {
-        PARAMETER_KEYS.push(attrName);
-      }
-    }
-  }
-
-  // Add 'variable' keyword
-  if (!PARAMETER_KEYS.includes('variable')) {
-    PARAMETER_KEYS.push('variable');
-  }
 
   // Initialize parser
   initializeParser();
@@ -1109,266 +1078,725 @@ function updateLFOParameterInBlocks(lfoName, parameterName, value) {
 // NEW SYNC FUNCTION - Uses parser + UI generator
 // ============================================================================
 function syncUIFromText() {
-  // Check if systems are initialized
-  if (!parser || !uiGenerator) {
-    console.warn('Parser or UI generator not initialized yet');
-    return;
-  }
-
   const text = getAllBlocksText();
 
   // Set flag to prevent circular updates
   isUpdatingFromText = true;
 
-  try {
-    // Parse document with new parser
-    const result = parser.parse(text);
+  // Parse document with new parser
+  const result = parser.parse(text);
 
-    if (!result.success) {
-      console.error('Parse errors:', result.errors);
-      // Still continue to show UI even with errors
-    }
+  if (!result.success) {
+    console.error('Parse errors:', result.errors);
+    // Still continue to show UI even with errors
+  }
 
-    if (result.warnings.length > 0) {
-      console.warn('Parse warnings:', result.warnings);
-    }
+  if (result.warnings.length > 0) {
+    console.warn('Parse warnings:', result.warnings);
+  }
 
-    // Generate UI from instance store
-    updateUIForCurrentBlock();
+  // Generate UI from instance store
+  updateUIForCurrentBlock();
 
-    // Update audio engine master chain
-    if (audioEngine) {
-      audioEngine.initializeMaster();
-    }
-  } catch (error) {
-    console.error('Error in syncUIFromText:', error);
+  // Update audio engine master chain
+  if (audioEngine) {
+    audioEngine.initializeMaster();
   }
 
   // Clear flag
   isUpdatingFromText = false;
 }
 
-// Update UI - shows controls for current block only (focused mode)
+// Update UI - now shows ALL components (not just current block)
 function updateUIForCurrentBlock() {
   const oscillatorsContainer = document.getElementById('oscillators-container');
   if (!oscillatorsContainer || !uiGenerator) return;
 
-  // Get the current block where cursor is
-  const currentBlock = getCurrentBlock();
-  if (!currentBlock) {
-    // No current block, show all
-    uiGenerator.setUpdatingFromText(true);
-    uiGenerator.generateUI(oscillatorsContainer);
-    uiGenerator.setUpdatingFromText(false);
-    return;
-  }
-
-  // Determine what component/trigger this block belongs to
-  const currentContext = getCurrentComponentContext(currentBlock);
-
   // Set UI generator flag
   uiGenerator.setUpdatingFromText(true);
 
-  // Generate UI only for current context
-  uiGenerator.generateFocusedUI(oscillatorsContainer, currentContext);
+  // Generate UI from instance store
+  uiGenerator.generateUI(oscillatorsContainer);
 
   // Clear flag
   uiGenerator.setUpdatingFromText(false);
 }
 
-// Get the component/trigger context for the current block
-function getCurrentComponentContext(block) {
-  const blocks = Array.from(parametersTextbox.querySelectorAll('.block'));
-  const currentIndex = blocks.indexOf(block);
+  // Reset variables
+  variables = {};
 
-  // If current block is empty/blank, don't show any controls
-  const currentContent = block.querySelector('.block-content');
-  if (currentContent && currentContent.textContent.trim() === '') {
-    return null;
-  }
+  // Reset LFO configs
+  lfoConfigs = {};
 
-  // Walk backwards from current block to find the component/trigger header
-  for (let i = currentIndex; i >= 0; i--) {
-    const content = blocks[i].querySelector('.block-content');
-    if (!content) continue;
+  // Reset envelope configs
+  envelopeConfigs = {};
 
-    const text = content.textContent.trim();
+  // Reset note configs
+  noteConfigs = {};
 
-    // Check if this is a component header (oscillator, lfo, envelope, filter, compressor)
-    const componentMatch = text.match(/^(oscillator|lfo|envelope|filter|compressor)\s+(.+)$/);
-    if (componentMatch) {
-      return { type: 'component', componentType: componentMatch[1], name: componentMatch[2] };
+  // Reset key configs
+  keyConfigs = {};
+
+  // Reset global config to defaults
+  globalConfig = {
+    masterVolume: { value: 0.8, isDefault: true },
+    masterEnvelope: {
+      attack: { value: 100, isDefault: true },
+      decay: { value: 100, isDefault: true },
+      sustain: { value: 1.0, isDefault: true },
+      release: { value: 500, isDefault: true }
+    },
+    filter: {
+      frequency: { value: 20000, isDefault: true },
+      resonance: { value: 1, isDefault: true },
+      frequencyEnvelope: { value: null, isDefault: true },
+      resonanceEnvelope: { value: null, isDefault: true }
+    },
+    compressor: {
+      threshold: { value: -20, isDefault: true },
+      ratio: { value: 12, isDefault: true },
+      knee: { value: 30, isDefault: true },
+      attack: { value: 0.003, isDefault: true },
+      release: { value: 0.25, isDefault: true }
+    },
+    chord: { value: 'none', isDefault: true },
+    detune: { value: 0, isDefault: true }
+  };
+
+  lines.forEach(line => {
+    // Check if this is an oscillator heading (not indented, starts with "oscillator ")
+    const oscMatch = line.match(/^oscillator\s+(.+)$/i);
+    if (oscMatch) {
+      currentOscillatorName = oscMatch[1].trim();
+      currentLFOName = null;
+      if (!oscillatorsByName.has(currentOscillatorName)) {
+        oscillatorsByName.set(currentOscillatorName, {
+          wave: null,
+          octave: null,
+          detune: null,
+          volume: null,
+          pitch: null,
+          attack: null,
+          sustain: null,
+          release: null
+        });
+      }
+      return;
     }
 
-    // Check if this is a trigger header (master, note, key)
-    const triggerMatch = text.match(/^(master|note|key)(?:\s+(.+))?$/);
-    if (triggerMatch) {
-      return { type: 'trigger', triggerType: triggerMatch[1], name: triggerMatch[2] || '' };
+    // Check if this is an LFO heading (not indented, starts with "lfo ")
+    const lfoMatch = line.match(/^lfo\s+(.+)$/i);
+    if (lfoMatch) {
+      currentLFOName = lfoMatch[1].trim();
+      currentOscillatorName = null;
+      currentNoteName = null;
+      if (!lfosByName.has(currentLFOName)) {
+        lfosByName.set(currentLFOName, {
+          rate: null,
+          depth: null,
+          wave: null
+        });
+      }
+      return;
     }
 
-    // Check if this is a variable
-    const variableMatch = text.match(/^variable\s+(\w+)/);
-    if (variableMatch) {
-      // Find all consecutive variables in this group
-      const variableGroup = [];
+    // Check if this is a note heading (not indented, starts with "note ")
+    const noteMatch = line.match(/^note\s+(.+)$/i);
+    if (noteMatch) {
+      // Parse multiple note names separated by spaces
+      const noteNames = noteMatch[1].trim().toLowerCase().split(/\s+/);
+      currentNoteName = noteNames; // Store as array for multi-note support
+      currentOscillatorName = null;
+      currentLFOName = null;
 
-      // Start from current block and scan up and down for consecutive variables
-      let startIdx = i;
-      let endIdx = i;
+      // Create an entry for each note name
+      noteNames.forEach(noteName => {
+        if (!notesByName.has(noteName)) {
+          notesByName.set(noteName, {
+            pitch: null,
+            chord: null
+          });
+        }
+      });
+      return;
+    }
 
-      // Scan backwards for more variables
-      while (startIdx > 0) {
-        const prevBlock = blocks[startIdx - 1];
-        const prevContent = prevBlock.querySelector('.block-content');
-        if (!prevContent) break;
+    // Check if this is a key heading (not indented, starts with "key ")
+    const keyMatch = line.match(/^key\s+(.+)$/i);
+    if (keyMatch) {
+      const keyChar = keyMatch[1].trim().toLowerCase();
+      currentKeyChar = keyChar;
+      currentOscillatorName = null;
+      currentLFOName = null;
+      currentNoteName = null;
 
-        const prevText = prevContent.textContent.trim();
-
-        // Stop at blank lines or non-variables
-        if (prevText === '') break;
-        if (!prevText.match(/^variable\s+(\w+)/)) break;
-
-        startIdx--;
+      if (!keysByChar.has(keyChar)) {
+        keysByChar.set(keyChar, {
+          pitch: null
+        });
       }
+      return;
+    }
 
-      // Scan forwards for more variables
-      while (endIdx < blocks.length - 1) {
-        const nextBlock = blocks[endIdx + 1];
-        const nextContent = nextBlock.querySelector('.block-content');
-        if (!nextContent) break;
-
-        const nextText = nextContent.textContent.trim();
-
-        // Stop at blank lines or non-variables
-        if (nextText === '') break;
-        if (!nextText.match(/^variable\s+(\w+)/)) break;
-
-        endIdx++;
+    // Check if this is a named envelope heading (not indented, starts with "envelope ")
+    const envelopeMatch = line.match(/^envelope\s+(.+)$/i);
+    if (envelopeMatch) {
+      currentEnvelopeName = envelopeMatch[1].trim();
+      currentOscillatorName = null;
+      currentLFOName = null;
+      currentNoteName = null;
+      currentKeyChar = null;
+      currentSection = null;
+      if (!envelopesByName.has(currentEnvelopeName)) {
+        envelopesByName.set(currentEnvelopeName, {
+          attack: null,
+          decay: null,
+          sustain: null,
+          release: null
+        });
       }
+      return;
+    }
 
-      // Collect all variable names in the group
-      for (let j = startIdx; j <= endIdx; j++) {
-        const varBlock = blocks[j];
-        const varContent = varBlock.querySelector('.block-content');
-        if (!varContent) continue;
+    // Check for new global section headers (master, envelope, compressor, global)
+    if (line.match(/^master$/i)) {
+      currentSection = 'master';
+      currentOscillatorName = null;
+      currentLFOName = null;
+      currentNoteName = null;
+      currentKeyChar = null;
+      currentEnvelopeName = null;
+      return;
+    }
 
-        const varText = varContent.textContent.trim();
-        const varMatch = varText.match(/^variable\s+(\w+)/);
-        if (varMatch) {
-          variableGroup.push(varMatch[1]);
+    if (line.match(/^envelope$/i)) {
+      currentSection = 'envelope';
+      currentOscillatorName = null;
+      currentLFOName = null;
+      currentNoteName = null;
+      currentKeyChar = null;
+      currentEnvelopeName = null;
+      return;
+    }
+
+    if (line.match(/^filter$/i)) {
+      currentSection = 'filter';
+      currentOscillatorName = null;
+      currentLFOName = null;
+      currentNoteName = null;
+      currentKeyChar = null;
+      return;
+    }
+
+    if (line.match(/^compressor$/i)) {
+      currentSection = 'compressor';
+      currentOscillatorName = null;
+      currentLFOName = null;
+      currentNoteName = null;
+      currentKeyChar = null;
+      return;
+    }
+
+    if (line.match(/^global$/i)) {
+      currentSection = 'global';
+      currentOscillatorName = null;
+      currentLFOName = null;
+      currentNoteName = null;
+      currentKeyChar = null;
+      return;
+    }
+
+    // Handle indented lines
+    if (line.startsWith('  ')) {
+      const trimmedLine = line.trim();
+
+      // Try to match against known parameter keys
+      let matchedKey = null;
+      let value = null;
+      for (const key of PARAMETER_KEYS) {
+        if (trimmedLine.startsWith(key + ' ')) {
+          matchedKey = key;
+          value = trimmedLine.substring(key.length + 1);
+          break;
         }
       }
 
-      return { type: 'trigger', triggerType: 'variable', name: variableMatch[1], variableGroup };
-    }
-  }
+      if (!matchedKey) return;
 
-  // Default to showing all
-  return null;
+      // If we're in an oscillator block
+      if (currentOscillatorName) {
+        const osc = oscillatorsByName.get(currentOscillatorName);
+
+        if (matchedKey === 'wave') osc.wave = value;
+        if (matchedKey === 'octave') osc.octave = parseInt(resolveValue(value));
+        if (matchedKey === 'detune') osc.detune = resolveValue(value);
+        if (matchedKey === 'volume') osc.volume = resolveValue(value) / 100;
+        if (matchedKey === 'pitch') osc.pitch = value;
+        if (matchedKey === 'attack time') osc.attack = resolveValue(value);
+        if (matchedKey === 'sustain level') osc.sustain = resolveValue(value) / 100;
+        if (matchedKey === 'release time') osc.release = resolveValue(value);
+      }
+
+      // If we're in an LFO block
+      if (currentLFOName) {
+        const lfo = lfosByName.get(currentLFOName);
+
+        if (matchedKey === 'rate') lfo.rate = parseFloat(value);
+        if (matchedKey === 'depth') lfo.depth = parseFloat(value);
+        if (matchedKey === 'wave') lfo.wave = value;
+      }
+
+      // If we're in a named envelope block
+      if (currentEnvelopeName) {
+        const envelope = envelopesByName.get(currentEnvelopeName);
+
+        if (matchedKey === 'attack time') envelope.attack = resolveValue(value);
+        if (matchedKey === 'decay time') envelope.decay = resolveValue(value);
+        if (matchedKey === 'sustain level') envelope.sustain = resolveValue(value) / 100;
+        if (matchedKey === 'release time') envelope.release = resolveValue(value);
+      }
+
+      // If we're in a note block (currentNoteName is an array of note names)
+      if (currentNoteName) {
+        currentNoteName.forEach(noteName => {
+          const note = notesByName.get(noteName);
+          if (note) {
+            if (matchedKey === 'pitch') {
+              note.pitch = value;
+            }
+            if (matchedKey === 'chord') {
+              note.chord = value;
+            }
+          }
+        });
+      }
+
+      // If we're in a key block
+      if (currentKeyChar) {
+        const key = keysByChar.get(currentKeyChar);
+        if (key) {
+          if (matchedKey === 'pitch') {
+            key.pitch = value;
+          }
+        }
+      }
+
+      // If we're in a new global section
+      if (currentSection === 'master') {
+        if (matchedKey === 'volume') {
+          globalConfig.masterVolume = {
+            value: parseFloat(value) / 100,
+            isDefault: false
+          };
+        }
+      }
+
+      if (currentSection === 'envelope') {
+        if (matchedKey === 'attack time') {
+          globalConfig.masterEnvelope.attack = {
+            value: parseFloat(value),
+            isDefault: false
+          };
+        }
+        if (matchedKey === 'decay time') {
+          globalConfig.masterEnvelope.decay = {
+            value: parseFloat(value),
+            isDefault: false
+          };
+        }
+        if (matchedKey === 'sustain level') {
+          globalConfig.masterEnvelope.sustain = {
+            value: parseFloat(value) / 100,
+            isDefault: false
+          };
+        }
+        if (matchedKey === 'release time') {
+          globalConfig.masterEnvelope.release = {
+            value: parseFloat(value),
+            isDefault: false
+          };
+        }
+      }
+
+      if (currentSection === 'filter') {
+        if (matchedKey === 'filter frequency') {
+          globalConfig.filter.frequency = {
+            value: parseFloat(value),
+            isDefault: false
+          };
+        }
+        if (matchedKey === 'filter resonance') {
+          globalConfig.filter.resonance = {
+            value: parseFloat(value),
+            isDefault: false
+          };
+        }
+        if (matchedKey === 'frequency envelope') {
+          globalConfig.filter.frequencyEnvelope = {
+            value: value,
+            isDefault: false
+          };
+        }
+        if (matchedKey === 'resonance envelope') {
+          globalConfig.filter.resonanceEnvelope = {
+            value: value,
+            isDefault: false
+          };
+        }
+      }
+
+      if (currentSection === 'compressor') {
+        if (matchedKey === 'threshold') {
+          globalConfig.compressor.threshold = {
+            value: parseFloat(value),
+            isDefault: false
+          };
+        }
+        if (matchedKey === 'ratio') {
+          globalConfig.compressor.ratio = {
+            value: parseFloat(value),
+            isDefault: false
+          };
+        }
+        if (matchedKey === 'knee') {
+          globalConfig.compressor.knee = {
+            value: parseFloat(value),
+            isDefault: false
+          };
+        }
+        if (matchedKey === 'attack') {
+          globalConfig.compressor.attack = {
+            value: parseFloat(value),
+            isDefault: false
+          };
+        }
+        if (matchedKey === 'release') {
+          globalConfig.compressor.release = {
+            value: parseFloat(value),
+            isDefault: false
+          };
+        }
+      }
+
+      if (currentSection === 'global') {
+        if (matchedKey === 'chord') {
+          globalConfig.chord = {
+            value: value,
+            isDefault: false
+          };
+        }
+        if (matchedKey === 'detune') {
+          globalConfig.detune = {
+            value: parseFloat(value),
+            isDefault: false
+          };
+        }
+      }
+
+      return;
+    }
+
+    // Non-indented line - could be global parameter
+    if (!line.startsWith('  ')) {
+      currentOscillatorName = null;
+      currentLFOName = null;
+      currentNoteName = null;
+      currentKeyChar = null;
+      currentSection = null;
+
+      const trimmedLine = line.trim();
+      if (trimmedLine.startsWith('variable ')) {
+        // Parse variable definition: "variable name value"
+        const parts = trimmedLine.substring('variable '.length).split(' ');
+        if (parts.length >= 2) {
+          const varName = parts[0];
+          const varValue = parseFloat(parts[1]);
+          if (!isNaN(varValue)) {
+            variables[varName] = varValue;
+          }
+        }
+      }
+      // Old global parameter syntax removed - use new section-based syntax instead
+    }
+  });
+
+  // Save old config to detect changes
+  const oldConfigJSON = JSON.stringify(oscillatorConfigs);
+
+  // Update oscillatorConfigs array to include ALL fully defined oscillators
+  oscillatorConfigs = [];
+
+  // Convert map to array of [name, config] pairs
+  const oscillatorArray = Array.from(oscillatorsByName.entries());
+
+  // Update global oscillator names array
+  oscillatorNames = oscillatorArray.map(([name]) => name);
+
+  // Add all oscillators to configs with defaults for missing parameters
+  oscillatorArray.forEach(([name, osc]) => {
+    // Use defaults for any missing parameters (volume and sustain stored as 0-1 for audio)
+    const config = {
+      wave: osc.wave !== null ? osc.wave : 'sine',
+      octave: osc.octave !== null ? osc.octave : 0,
+      detune: osc.detune !== null ? osc.detune : 0,
+      volume: osc.volume !== null ? osc.volume : 0.5,
+      pitch: osc.pitch !== null ? osc.pitch : null,
+      attack: osc.attack !== null ? osc.attack : 100,
+      sustain: osc.sustain !== null ? osc.sustain : 0.5,
+      release: osc.release !== null ? osc.release : 500
+    };
+    oscillatorConfigs.push(config);
+  });
+
+  // Populate lfoConfigs from parsed LFOs
+  lfosByName.forEach((lfo, name) => {
+    lfoConfigs[name] = {
+      rate: lfo.rate !== null ? lfo.rate : 5,
+      depth: lfo.depth !== null ? lfo.depth : 10,
+      wave: lfo.wave !== null ? lfo.wave : 'sine'
+    };
+  });
+
+  // Populate envelopeConfigs from parsed named envelopes
+  envelopesByName.forEach((envelope, name) => {
+    envelopeConfigs[name] = {
+      attack: envelope.attack !== null ? envelope.attack : 100,
+      decay: envelope.decay !== null ? envelope.decay : 100,
+      sustain: envelope.sustain !== null ? envelope.sustain : 1.0,
+      release: envelope.release !== null ? envelope.release : 500
+    };
+  });
+
+  // Populate noteConfigs from parsed notes
+  notesByName.forEach((note, name) => {
+    noteConfigs[name] = {
+      pitch: note.pitch,
+      chord: note.chord
+    };
+  });
+
+  // Populate keyConfigs from parsed keys
+  keysByChar.forEach((key, keyChar) => {
+    keyConfigs[keyChar] = {
+      pitch: key.pitch
+    };
+  });
+
+  // Update visual keyboard to highlight keys with definitions
+  updateKeyboardHighlights();
+
+  // Update UI for current block (will be called by cursor tracking)
+  updateUIForCurrentBlock();
+
+  // Apply global config to audio engine
+  masterGain.gain.value = globalConfig.masterVolume.value;
+  filter.frequency.value = globalConfig.filter.frequency.value;
+  filter.Q.value = globalConfig.filter.resonance.value;
+  compressor.threshold.value = globalConfig.compressor.threshold.value;
+  compressor.ratio.value = globalConfig.compressor.ratio.value;
+  compressor.knee.value = globalConfig.compressor.knee.value;
+  compressor.attack.value = globalConfig.compressor.attack.value;
+  compressor.release.value = globalConfig.compressor.release.value;
+
+  // If oscillator configuration changed, stop all active notes so they restart with new config
+  const newConfigJSON = JSON.stringify(oscillatorConfigs);
+  if (oldConfigJSON !== newConfigJSON) {
+    polyphonyManager.stopAllNotes();
+  }
 }
 
-// Bridge function for UI generator to update text from UI changes
-window.updateTextFromUIChange = function(componentOrTrigger, name, attribute, value) {
-  console.log('updateTextFromUIChange called:', componentOrTrigger, name, attribute, value);
+// Update UI to show only controls for the current block
+function updateUIForCurrentBlock() {
+  const oscillatorsContainer = document.getElementById('oscillators-container');
+  if (!oscillatorsContainer) return;
 
-  // Set flag to prevent circular updates
-  isUpdatingFromText = true;
-
-  try {
-    // Find the block for this component/trigger and attribute
-    const blocks = Array.from(parametersTextbox.querySelectorAll('.block'));
-    let inTargetComponent = false;
-
-    // Handle variables specially
-    if (componentOrTrigger === 'variable') {
-      // Get variable metadata to preserve range if it exists
-      const metadata = instanceStore.getVariableMetadata(name);
-      let newText = `variable ${name} = ${value}`;
-
-      // Add range if specified
-      if (metadata && metadata.min !== null && metadata.max !== null) {
-        newText += ` [${metadata.min}, ${metadata.max}]`;
-      }
-
-      for (const block of blocks) {
-        const content = block.querySelector('.block-content');
-        if (!content) continue;
-
-        const text = content.textContent.trim();
-        if (text.startsWith(`variable ${name} =`)) {
-          content.textContent = newText;
-          formatBlock(block);
-          console.log('Updated variable:', name, 'to', value);
-          return true;
-        }
-      }
-      console.warn('Variable not found:', name);
-      return false;
-    }
-
-    for (const block of blocks) {
-      const content = block.querySelector('.block-content');
-      if (!content) continue;
-
-      const rawText = content.textContent;
-      const text = rawText.trim();
-
-      // Build expected header text
-      const expectedHeader = name ? `${componentOrTrigger} ${name}` : componentOrTrigger;
-
-      // Check if this is the target component/trigger header
-      if (text === expectedHeader) {
-        console.log('Found component header:', text);
-        inTargetComponent = true;
-        continue;
-      }
-
-      // Check if we've left the component (new top-level declaration)
-      // Use rawText to check for leading spaces
-      if (!rawText.startsWith('  ') && text.length > 0 && text !== expectedHeader) {
-        if (inTargetComponent) {
-          console.log('Left component at:', text);
-        }
-        inTargetComponent = false;
-      }
-
-      // If we're in the target component and this is the attribute line
-      // Use rawText to check for leading spaces
-      if (inTargetComponent && rawText.startsWith('  ')) {
-        console.log('Checking attribute line:', text, 'looking for:', attribute);
-        if (text.startsWith(attribute + ' ')) {
-          content.textContent = `  ${attribute} ${value}`;
-          formatBlock(block);
-          console.log('Updated', componentOrTrigger, name, attribute, 'to', value);
-          return true;
-        }
-      }
-    }
-
-    console.warn('Could not find block to update:', componentOrTrigger, name, attribute);
-    return false;
-  } finally {
-    // Clear flag
-    isUpdatingFromText = false;
+  // Get the current block
+  const currentBlock = getCurrentBlock();
+  if (!currentBlock) {
+    // No block selected - clear UI
+    oscillatorsContainer.innerHTML = '<div style="padding: 20px; color: #969896; text-align: center;">Click on a line to see its controls</div>';
+    return;
   }
-};
 
+  const blockContent = currentBlock.querySelector('.block-content');
+  if (!blockContent) {
+    oscillatorsContainer.innerHTML = '<div style="padding: 20px; color: #969896; text-align: center;">Click on a line to see its controls</div>';
+    return;
+  }
 
-// Helper: Convert MIDI note number to note name (e.g., 60 -> 'c4')
-function midiNoteToNoteName(midiNote) {
-  const noteNames = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#', 'b'];
-  const octave = Math.floor(midiNote / 12) - 1;
-  const noteName = noteNames[midiNote % 12];
-  return `${noteName}${octave}`;
-}
+  const text = blockContent.textContent.trim();
 
-// Helper: Convert frequency to note name (approximate)
-function frequencyToNoteName(frequency) {
-  const noteNames = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#', 'b'];
-  const midiNote = Math.round(12 * Math.log2(frequency / 440) + 69);
-  const octave = Math.floor(midiNote / 12) - 1;
-  const noteName = noteNames[midiNote % 12];
-  return `${noteName}${octave}`;
+  // Clear existing UI
+  oscillatorsContainer.innerHTML = '';
+
+  // Check what type of block this is and generate appropriate UI
+
+  // Check for oscillator
+  const oscMatch = text.match(/^oscillator\s+(.+)$/i);
+  if (oscMatch) {
+    const oscName = oscMatch[1];
+    const oscIndex = oscillatorNames.indexOf(oscName);
+    if (oscIndex >= 0 && oscIndex < oscillatorConfigs.length) {
+      const config = oscillatorConfigs[oscIndex];
+      const section = createOscillatorSection(oscName, oscIndex, config);
+      oscillatorsContainer.appendChild(section);
+    }
+    return;
+  }
+
+  // Check for LFO
+  const lfoMatch = text.match(/^lfo\s+(.+)$/i);
+  if (lfoMatch) {
+    const lfoName = lfoMatch[1];
+    if (lfoConfigs[lfoName]) {
+      const section = createLFOSection(lfoName, lfoConfigs[lfoName]);
+      oscillatorsContainer.appendChild(section);
+    }
+    return;
+  }
+
+  // Check for named envelope
+  const namedEnvelopeMatch = text.match(/^envelope\s+(.+)$/i);
+  if (namedEnvelopeMatch) {
+    const envelopeName = namedEnvelopeMatch[1];
+    if (envelopeConfigs[envelopeName]) {
+      const section = createNamedEnvelopeSection(envelopeName, envelopeConfigs[envelopeName]);
+      oscillatorsContainer.appendChild(section);
+    }
+    return;
+  }
+
+  // Check for master section
+  if (text.match(/^master$/i)) {
+    const section = createMasterVolumeSection();
+    oscillatorsContainer.appendChild(section);
+    return;
+  }
+
+  // Check for envelope section
+  if (text.match(/^envelope$/i)) {
+    const section = createMasterEnvelopeSection();
+    oscillatorsContainer.appendChild(section);
+    return;
+  }
+
+  // Check for filter section
+  if (text.match(/^filter$/i)) {
+    const section = createFilterSection();
+    oscillatorsContainer.appendChild(section);
+    return;
+  }
+
+  // Check for compressor section
+  if (text.match(/^compressor$/i)) {
+    const section = createCompressorSection();
+    oscillatorsContainer.appendChild(section);
+    return;
+  }
+
+  // Check for global section
+  if (text.match(/^global$/i)) {
+    const section = createGlobalSection();
+    oscillatorsContainer.appendChild(section);
+    return;
+  }
+
+  // Check for variable
+  if (text.match(/^variable\s+/i)) {
+    const section = createVariablesSection();
+    if (section) {
+      oscillatorsContainer.appendChild(section);
+    }
+    return;
+  }
+
+  // Check for note or key - these don't have their own UI sections currently
+  if (text.match(/^note\s+/i) || text.match(/^key\s+/i)) {
+    oscillatorsContainer.innerHTML = '<div style="padding: 20px; color: #969896; text-align: center;">Note and key blocks don\'t have UI controls</div>';
+    return;
+  }
+
+  // Check if this is a parameter line (indented) - find parent block
+  if (text && blockContent.textContent.startsWith('  ')) {
+    // This is an indented parameter line - find the parent block
+    let parentBlock = currentBlock.previousElementSibling;
+    while (parentBlock && parentBlock.classList.contains('block')) {
+      const parentContent = parentBlock.querySelector('.block-content');
+      if (parentContent && !parentContent.textContent.startsWith('  ')) {
+        // Found parent - generate UI for parent
+        const parentTextContent = parentContent.textContent.trim();
+
+        // Check parent type and generate UI
+        const parentOscMatch = parentTextContent.match(/^oscillator\s+(.+)$/i);
+        if (parentOscMatch) {
+          const oscName = parentOscMatch[1];
+          const oscIndex = oscillatorNames.indexOf(oscName);
+          if (oscIndex >= 0 && oscIndex < oscillatorConfigs.length) {
+            const config = oscillatorConfigs[oscIndex];
+            const section = createOscillatorSection(oscName, oscIndex, config);
+            oscillatorsContainer.appendChild(section);
+          }
+          return;
+        }
+
+        const parentLfoMatch = parentTextContent.match(/^lfo\s+(.+)$/i);
+        if (parentLfoMatch) {
+          const lfoName = parentLfoMatch[1];
+          if (lfoConfigs[lfoName]) {
+            const section = createLFOSection(lfoName, lfoConfigs[lfoName]);
+            oscillatorsContainer.appendChild(section);
+          }
+          return;
+        }
+
+        const parentEnvelopeMatch = parentTextContent.match(/^envelope\s+(.+)$/i);
+        if (parentEnvelopeMatch) {
+          const envelopeName = parentEnvelopeMatch[1];
+          if (envelopeConfigs[envelopeName]) {
+            const section = createNamedEnvelopeSection(envelopeName, envelopeConfigs[envelopeName]);
+            oscillatorsContainer.appendChild(section);
+          }
+          return;
+        }
+
+        if (parentTextContent.match(/^master$/i)) {
+          const section = createMasterVolumeSection();
+          oscillatorsContainer.appendChild(section);
+          return;
+        }
+
+        if (parentTextContent.match(/^envelope$/i)) {
+          const section = createMasterEnvelopeSection();
+          oscillatorsContainer.appendChild(section);
+          return;
+        }
+
+        if (parentTextContent.match(/^filter$/i)) {
+          const section = createFilterSection();
+          oscillatorsContainer.appendChild(section);
+          return;
+        }
+
+        if (parentTextContent.match(/^compressor$/i)) {
+          const section = createCompressorSection();
+          oscillatorsContainer.appendChild(section);
+          return;
+        }
+
+        if (parentTextContent.match(/^global$/i)) {
+          const section = createGlobalSection();
+          oscillatorsContainer.appendChild(section);
+          return;
+        }
+
+        break;
+      }
+      parentBlock = parentBlock.previousElementSibling;
+    }
+  }
+
+  // Default - no matching block type
+  oscillatorsContainer.innerHTML = '<div style="padding: 20px; color: #969896; text-align: center;">No controls for this block</div>';
 }
 
 // Polyphony Manager to track active notes
@@ -1381,50 +1809,29 @@ class PolyphonyManager {
     if (this.activeNotes.has(noteId)) {
       this.stopNote(noteId);
     }
-
-    // Convert MIDI note or frequency to note name (e.g., 'c4')
-    const noteName = midiNote ? midiNoteToNoteName(midiNote) : frequencyToNoteName(frequency);
-
-    // Determine key scope if a key is held
-    const keyScope = keyChar ? `key_${keyChar}` : null;
-
-    // Create note using audio engine
-    const note = audioEngine ? audioEngine.createNote(noteName, frequency, keyScope) : null;
-
-    if (note) {
-      this.activeNotes.set(noteId, note);
-    }
-
+    const note = new Note(frequency, noteId, this, isSynthetic, midiNote, keyChar);
+    this.activeNotes.set(noteId, note);
+    note.start(velocity);
     updateNoteDisplay();
   }
 
   stopNote(noteId) {
     const note = this.activeNotes.get(noteId);
-    if (note && audioEngine) {
-      audioEngine.stopNote(note);
+    if (note) {
+      note.stop();
       this.activeNotes.delete(noteId);
       updateNoteDisplay();
     }
   }
 
   stopAllNotes() {
-    if (audioEngine) {
-      this.activeNotes.forEach((note) => audioEngine.stopNote(note));
-    }
+    this.activeNotes.forEach((note) => note.stop());
     this.activeNotes.clear();
     updateNoteDisplay();
   }
 }
 
 // Encapsulated Note class with multiple oscillators, each with independent envelope
-// ============================================================================
-// OLD NOTE CLASS - Replaced by audioEngine.NoteInstance
-// ============================================================================
-// This class has been replaced by the generic audio engine.
-// Kept here temporarily for reference, but no longer used.
-// TODO: Remove after full testing
-// ============================================================================
-/*
 class Note {
   constructor(frequency, noteId, manager, isSynthetic = false, midiNote = null, keyChar = null) {
     this.frequency = frequency;
@@ -1767,97 +2174,59 @@ class Note {
     this.keyLfos = [];
   }
 }
-*/
-// ============================================================================
-// END OLD NOTE CLASS
-// ============================================================================
 
-// Global variables
-let audioContext;
-let parametersTextbox;
-let polyphonyManager;
+// Initialize Audio Context
+const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+const masterGain = audioContext.createGain();
+masterGain.gain.value = 0.8;
 
-// Initialize when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-  try {
-    console.log('DOM loaded, initializing...');
+// Add low-pass filter
+const filter = audioContext.createBiquadFilter();
+filter.type = 'lowpass';
+filter.frequency.value = 20000;  // 20kHz - fully open by default
+filter.Q.value = 1;              // Resonance (Q factor)
 
-    // Initialize Audio Context
-    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    console.log('Audio context created');
+// Add compressor to prevent clipping
+const compressor = audioContext.createDynamicsCompressor();
+compressor.threshold.value = -20;  // Start compressing at -20dB
+compressor.knee.value = 30;        // Smooth compression curve
+compressor.ratio.value = 12;       // Heavy compression ratio
+compressor.attack.value = 0.003;   // Fast attack (3ms)
+compressor.release.value = 0.25;   // Quick release (250ms)
 
-    // DOM Elements
-    parametersTextbox = document.getElementById("parameters");
-    commandModal = document.getElementById('command-modal');
-    commandSearch = document.getElementById('command-search');
-    commandList = document.getElementById('command-list');
+// Connect: masterGain → filter → compressor → destination
+masterGain.connect(filter);
+filter.connect(compressor);
+compressor.connect(audioContext.destination);
 
-    if (!parametersTextbox) {
-      console.error('Parameters textbox not found!');
-      return;
-    }
-    console.log('DOM elements found');
+// DOM Elements
+const parametersTextbox = document.getElementById("parameters");
 
-    // Initialize new architecture
-    console.log('Initializing default oscillator names...');
-    initializeDefaultOscillatorNames();
-
-    console.log('Initializing new architecture...');
-    initializeNewArchitecture();
-
-    // Polyphony Manager
-    console.log('Creating polyphony manager...');
-    polyphonyManager = new PolyphonyManager();
-
-    console.log('Systems initialized, calling initialize()...');
-
-    // Call the main initialize function
-    initialize();
-
-    // Register all event listeners
-    console.log('Registering event listeners...');
-    registerEventListeners();
-
-    console.log('Initialization complete!');
-  } catch (error) {
-    console.error('Error during initialization:', error);
-    console.error('Stack trace:', error.stack);
-  }
-});
-
-// Legacy references (kept for backwards compatibility, but managed by audioEngine now)
-const masterGain = audioEngine ? audioEngine.masterGain : null;
-const filter = audioEngine ? audioEngine.masterFilter : null;
-const compressor = audioEngine ? audioEngine.masterCompressor : null;
+// Polyphony Manager
+const polyphonyManager = new PolyphonyManager();
 
 // ===== Chord Generation Functions =====
 
 // Calculate all frequencies for a chord based on root frequency
 function getChordFrequencies(rootFrequency, midiNote = null) {
-  // Get chord type from master trigger attributes (defaults to 'none')
-  let chordType = instanceStore ? instanceStore.getTriggerAttribute('master', 'chord') : null;
-  if (!chordType) {
-    chordType = 'none';
-  }
+  let chordType = globalConfig.chord.value;
 
   // Check for note-specific chord config (overrides global)
   if (midiNote !== null) {
     const noteName = midiNoteToNoteName(midiNote); // e.g., "c4"
 
-    // Check for note-specific chord in instance store
-    let noteScope = `note_${noteName}`;
-    let noteChord = instanceStore ? instanceStore.getTriggerAttribute(noteScope, 'chord') : null;
+    // First check for exact match
+    let noteSpecificConfig = noteConfigs[noteName];
 
     // If not found, check for wildcard match (note name without octave)
-    if (!noteChord) {
+    if (!noteSpecificConfig) {
       const noteNameWithoutOctave = noteName.replace(/\d+$/, ''); // e.g., "c4" -> "c"
-      noteScope = `note_${noteNameWithoutOctave}`;
-      noteChord = instanceStore ? instanceStore.getTriggerAttribute(noteScope, 'chord') : null;
+      noteSpecificConfig = noteConfigs[noteNameWithoutOctave];
     }
 
     // If note-specific chord is defined, use it
-    if (noteChord) {
-      chordType = noteChord;
+    if (noteSpecificConfig && noteSpecificConfig.chord) {
+      chordType = noteSpecificConfig.chord;
     }
   }
 
@@ -1950,11 +2319,6 @@ function createBlock(text = '') {
     content.textContent = text;
   }
 
-  // Add click listener to update focused UI when block is clicked
-  content.addEventListener('click', () => {
-    updateUIForCurrentBlock();
-  });
-
   block.appendChild(content);
   return block;
 }
@@ -2037,15 +2401,6 @@ function formatBlock(block) {
     return;
   }
 
-  // Check if this is a named filter header line (e.g., "filter myfilter")
-  const namedFilterMatch = trimmed.match(/^filter\s+(.+)$/i);
-  if (namedFilterMatch) {
-    const filterName = namedFilterMatch[1];
-    content.innerHTML = `${leadingSpaces}<span class="syntax-key">filter</span> <span class="syntax-oscillator">${filterName}</span>`;
-    setCursorPositionInBlock(content, cursorPos);
-    return;
-  }
-
   // Check if this is a master section header
   if (trimmed.match(/^master$/i)) {
     content.innerHTML = `${leadingSpaces}<span class="syntax-key">master</span>`;
@@ -2056,6 +2411,13 @@ function formatBlock(block) {
   // Check if this is an envelope section header
   if (trimmed.match(/^envelope$/i)) {
     content.innerHTML = `${leadingSpaces}<span class="syntax-key">envelope</span>`;
+    setCursorPositionInBlock(content, cursorPos);
+    return;
+  }
+
+  // Check if this is a filter section header
+  if (trimmed.match(/^filter$/i)) {
+    content.innerHTML = `${leadingSpaces}<span class="syntax-key">filter</span>`;
     setCursorPositionInBlock(content, cursorPos);
     return;
   }
@@ -2084,12 +2446,6 @@ function formatBlock(block) {
       const varName = parts[0];
       const varValue = parts.slice(1).join(' ');
       content.innerHTML = `${leadingSpaces}<span class="syntax-key">variable</span> <span class="syntax-oscillator">${varName}</span> <span class="syntax-number">${varValue}</span>`;
-
-      // Preserve trailing space after value (allows typing space before [)
-      if (text.endsWith(' ') && !trimmed.endsWith(' ')) {
-        content.appendChild(document.createTextNode(' '));
-      }
-
       setCursorPositionInBlock(content, cursorPos);
       return;
     } else if (parts.length === 1 && parts[0]) {
@@ -2140,7 +2496,7 @@ function formatBlock(block) {
 
   // Full parameter line with value - format it
   // Check if value is a variable reference
-  const isVariable = instanceStore && instanceStore.getVariable(value) !== null;
+  const isVariable = variables.hasOwnProperty(value);
   const isNumber = !isVariable && !isNaN(parseFloat(value)) && isFinite(value);
   const valueClass = isVariable ? 'syntax-oscillator' : (isNumber ? 'syntax-number' : 'syntax-string');
 
@@ -2226,52 +2582,40 @@ function focusBlock(blockElement, atEnd = false) {
 function initializeBlocks() {
   const initialLines = [];
 
-  // Create default document using new architecture syntax
-  initialLines.push('# Welcome to Clarity');
-  initialLines.push('');
-
-  // Vibrato controls
-  initialLines.push('variable vibrato_depth = 20');
-  initialLines.push('variable vibrato_rate = 5');
-  initialLines.push('');
-
-  // Volume controls
-  initialLines.push('variable lead_volume = 60');
-  initialLines.push('variable bass_volume = 40');
-  initialLines.push('');
-
-  // Lead oscillator with LFO modulation
-  initialLines.push('oscillator lead');
-  initialLines.push('  wave sawtooth');
-  initialLines.push('  octave 0');
-  initialLines.push('  volume lead_volume');
-  initialLines.push('  pitch vibrato');
-  initialLines.push('');
-
-  // Bass oscillator
-  initialLines.push('oscillator bass');
-  initialLines.push('  wave sine');
-  initialLines.push('  octave -1');
-  initialLines.push('  volume bass_volume');
-  initialLines.push('');
-
-  // LFO for vibrato (order doesn't matter - parser handles forward references)
-  initialLines.push('lfo vibrato');
-  initialLines.push('  rate vibrato_rate + 2');
-  initialLines.push('  depth vibrato_depth * 0.5');
-  initialLines.push('  wave sine');
-  initialLines.push('');
-
-  // Master section
+  // Add global parameters first using new section-based syntax
   initialLines.push('master');
-  initialLines.push('  volume 80');
-  initialLines.push('  attack 10');
-  initialLines.push('  sustain 100');
-  initialLines.push('  release 500');
+  initialLines.push(`  volume ${globalConfig.masterVolume.value * 100}`);
   initialLines.push('');
 
-  // Note: note-specific overrides are not working yet in the parser
-  // Will be fixed later: note c4 with variable vibrato_depth = 40
+  initialLines.push('envelope');
+  initialLines.push(`  attack time ${globalConfig.masterEnvelope.attack.value}`);
+  initialLines.push(`  decay time ${globalConfig.masterEnvelope.decay.value}`);
+  initialLines.push(`  sustain level ${globalConfig.masterEnvelope.sustain.value * 100}`);
+  initialLines.push(`  release time ${globalConfig.masterEnvelope.release.value}`);
+  initialLines.push('');
+
+  initialLines.push('compressor');
+  initialLines.push(`  threshold ${globalConfig.compressor.threshold.value}`);
+  initialLines.push(`  ratio ${globalConfig.compressor.ratio.value}`);
+  initialLines.push(`  knee ${globalConfig.compressor.knee.value}`);
+  initialLines.push(`  attack ${globalConfig.compressor.attack.value}`);
+  initialLines.push(`  release ${globalConfig.compressor.release.value}`);
+  initialLines.push('');
+
+  // Add oscillator lines from initial config
+  oscillatorNames.forEach((name, index) => {
+    if (index < oscillatorConfigs.length) {
+      const config = oscillatorConfigs[index];
+      initialLines.push(`oscillator ${name}`);
+      initialLines.push(`  wave ${config.wave}`);
+      initialLines.push(`  octave ${config.octave}`);
+      initialLines.push(`  volume ${config.volume * 100}`);
+      initialLines.push(`  attack time ${config.attack}`);
+      initialLines.push(`  sustain level ${config.sustain * 100}`);
+      initialLines.push(`  release time ${config.release}`);
+      initialLines.push(''); // Empty line between oscillators
+    }
+  });
 
   parametersTextbox.contentEditable = 'true';
   parametersTextbox.innerHTML = '';
@@ -2763,195 +3107,6 @@ function performIncrementInBlock(contentEl, direction, shiftKey) {
   setCursorPositionInBlock(contentEl, numberInfo.start + String(newValue).length);
 }
 
-// Register command modal event listeners
-function registerCommandModalListeners() {
-  if (!parametersTextbox || !commandModal || !commandSearch || !commandList) {
-    console.error('Cannot register command modal listeners: elements not found');
-    return;
-  }
-
-  // Handle slash to open command modal
-  parametersTextbox.addEventListener("keydown", (event) => {
-    if (event.key === "/" && !commandModalOpen) {
-      event.preventDefault();
-
-      const selection = window.getSelection();
-      let range;
-
-      if (selection.rangeCount > 0) {
-        range = selection.getRangeAt(0);
-      } else {
-        range = document.createRange();
-        range.selectNodeContents(parametersTextbox);
-        range.collapse(false);
-      }
-
-      // Store the cursor position
-      slashPosition = {
-        node: range.startContainer,
-        offset: range.startOffset
-      };
-
-      // Store the current block for commands that need to know where to insert
-      slashBlock = getCurrentBlock();
-
-      showCommandModal();
-      return;
-    }
-
-    // Close modal on space (insert the slash now)
-    if (event.key === " " && commandModalOpen) {
-      event.preventDefault();
-      if (slashPosition && slashPosition.node) {
-        const selection = window.getSelection();
-        const range = document.createRange();
-        const textNode = document.createTextNode("/");
-        range.setStart(slashPosition.node, slashPosition.offset);
-        range.collapse(true);
-        range.insertNode(textNode);
-        range.setStartAfter(textNode);
-        range.collapse(true);
-        selection.removeAllRanges();
-        selection.addRange(range);
-      }
-      hideCommandModal();
-      parametersTextbox.focus();
-      return;
-    }
-
-    // Close modal on / (slash) without inserting
-    if (event.key === "/" && commandModalOpen) {
-      event.preventDefault();
-      hideCommandModal();
-      parametersTextbox.focus();
-      return;
-    }
-
-    // Navigate commands with arrow keys
-    if (commandModalOpen && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
-      event.preventDefault();
-      const commandItems = commandList.querySelectorAll(".command-item:not(.no-results)");
-
-      if (event.key === "ArrowDown") {
-        selectedCommandIndex = (selectedCommandIndex + 1) % commandItems.length;
-      } else {
-        selectedCommandIndex = (selectedCommandIndex - 1 + commandItems.length) % commandItems.length;
-      }
-
-      commandItems.forEach((item, index) => {
-        item.classList.toggle("selected", index === selectedCommandIndex);
-      });
-
-      commandItems[selectedCommandIndex]?.scrollIntoView({ block: "nearest" });
-      return;
-    }
-
-    // Execute command on Enter
-    if (commandModalOpen && event.key === "Enter") {
-      event.preventDefault();
-      if (filteredCommandsList[selectedCommandIndex]) {
-        executeCommand(filteredCommandsList[selectedCommandIndex]);
-      }
-      return;
-    }
-
-    // Close modal on Escape
-    if (commandModalOpen && event.key === "Escape") {
-      event.preventDefault();
-      hideCommandModal();
-      parametersTextbox.focus();
-      return;
-    }
-  });
-
-  // Handle search input in command modal
-  commandSearch.addEventListener("input", () => {
-    filterCommands(commandSearch.value);
-    selectedCommandIndex = 0;
-  });
-
-  commandSearch.addEventListener("keydown", (event) => {
-    // Backspace with empty search - close modal
-    if (event.key === "Backspace" && commandSearch.value === "") {
-      event.preventDefault();
-      hideCommandModal();
-      parametersTextbox.focus();
-      return;
-    }
-
-    // Space with empty search - insert slash and close
-    if (event.key === " " && commandSearch.value === "") {
-      event.preventDefault();
-      if (slashPosition && slashPosition.node) {
-        const selection = window.getSelection();
-        const range = document.createRange();
-        const textNode = document.createTextNode("/");
-        range.setStart(slashPosition.node, slashPosition.offset);
-        range.collapse(true);
-        range.insertNode(textNode);
-        range.setStartAfter(textNode);
-        range.collapse(true);
-        selection.removeAllRanges();
-        selection.addRange(range);
-      }
-      hideCommandModal();
-      parametersTextbox.focus();
-      return;
-    }
-
-    // Close modal on /
-    if (event.key === "/") {
-      event.preventDefault();
-      hideCommandModal();
-      parametersTextbox.focus();
-      return;
-    }
-
-    // Navigate with arrow keys
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      const commandItems = commandList.querySelectorAll(".command-item:not(.no-results)");
-
-      if (event.key === "ArrowDown") {
-        selectedCommandIndex = (selectedCommandIndex + 1) % commandItems.length;
-      } else {
-        selectedCommandIndex = (selectedCommandIndex - 1 + commandItems.length) % commandItems.length;
-      }
-
-      commandItems.forEach((item, index) => {
-        item.classList.toggle("selected", index === selectedCommandIndex);
-      });
-
-      commandItems[selectedCommandIndex]?.scrollIntoView({ block: "nearest" });
-      return;
-    }
-
-    // Execute command on Enter
-    if (event.key === "Enter") {
-      event.preventDefault();
-      if (filteredCommandsList[selectedCommandIndex]) {
-        executeCommand(filteredCommandsList[selectedCommandIndex]);
-      }
-      return;
-    }
-  });
-
-  // Click outside to close modal
-  document.addEventListener("click", (event) => {
-    if (commandModalOpen && !commandModal.contains(event.target) && event.target !== parametersTextbox) {
-      hideCommandModal();
-    }
-  });
-
-  console.log('Command modal listeners registered');
-}
-
-// Register all event listeners (called after DOM is ready)
-function registerEventListeners() {
-  if (!parametersTextbox) {
-    console.error('Cannot register event listeners: parametersTextbox not found');
-    return;
-  }
 
 // Handle Arrow keys for navigation and Cmd/Ctrl + Arrow for incrementing/decrementing
 parametersTextbox.addEventListener("keydown", (e) => {
@@ -3009,16 +3164,13 @@ parametersTextbox.addEventListener("keydown", (e) => {
           // Place cursor at the same horizontal position
           selection.removeAllRanges();
           selection.addRange(targetRange);
-          updateUIForCurrentBlock();
         } else {
           // Fall back to beginning/end of target block
           focusBlock(targetBlock, isUp);
-          updateUIForCurrentBlock();
         }
       } else {
         // No content element, just focus the block
         focusBlock(targetBlock, isUp);
-        updateUIForCurrentBlock();
       }
     }
   }
@@ -3225,9 +3377,6 @@ parametersTextbox.addEventListener("keydown", (e) => {
 
   // Format the new block (will preserve the cursor position we just set)
   formatBlock(newBlock);
-
-  // Update UI panel to reflect new context
-  updateUIForCurrentBlock();
 });
 
 // Handle Backspace at beginning to merge with previous block
@@ -3265,9 +3414,6 @@ parametersTextbox.addEventListener("keydown", (e) => {
 
   // Focus at merge point in previous block
   focusBlock(prevBlock, true);
-
-  // Update UI panel to reflect new context
-  updateUIForCurrentBlock();
 });
 
 // Handle Tab for indenting and Shift+Tab for outdenting
@@ -3426,14 +3572,13 @@ document.addEventListener("keydown", (e) => {
     }
 
     // If this key has a definition (like an LFO assignment), track it but don't play notes
-    const keyScope = `key_${key}`;
-    const keyPitch = instanceStore ? instanceStore.getTriggerAttribute(keyScope, 'pitch') : null;
-    if (keyPitch) {
+    if (keyConfigs[key] && keyConfigs[key].pitch) {
       activeDefinedKeys.add(key);
 
       // Apply this key's LFO to all currently active notes
+      const lfoName = keyConfigs[key].pitch;
       polyphonyManager.activeNotes.forEach(note => {
-        note.addKeyLFO(keyPitch);
+        note.addKeyLFO(lfoName);
       });
 
       return;
@@ -3470,9 +3615,7 @@ document.addEventListener("keyup", (e) => {
     }
 
     // If this key has a definition, remove its LFO from all active notes
-    const keyScope = `key_${key}`;
-    const keyPitch = instanceStore ? instanceStore.getTriggerAttribute(keyScope, 'pitch') : null;
-    if (keyPitch) {
+    if (keyConfigs[key] && keyConfigs[key].pitch) {
       polyphonyManager.activeNotes.forEach(note => {
         note.removeKeyLFO();
       });
@@ -3506,31 +3649,6 @@ document.addEventListener("blur", (e) => {
   }
 }, true);
 
-  // Track selection changes (for mouse selection, focus changes, etc.)
-  // DISABLED: This was causing constant UI regeneration which removed slider event listeners
-  // TODO: Implement focused UI that only shows current block's controls without regenerating everything
-  // Update UI when cursor position changes (arrow keys, clicking, etc.)
-  let selectionChangeTimeout = null;
-  document.addEventListener('selectionchange', () => {
-    if (selectionChangeTimeout) {
-      clearTimeout(selectionChangeTimeout);
-    }
-    selectionChangeTimeout = setTimeout(() => {
-      const selection = window.getSelection();
-      if (selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
-        // Check if selection is within parametersTextbox
-        if (parametersTextbox.contains(range.commonAncestorContainer)) {
-          updateUIForCurrentBlock();
-        }
-      }
-    }, 50); // 50ms debounce for responsiveness
-  });
-
-  // Register command modal event listeners
-  registerCommandModalListeners();
-}  // End of registerEventListeners()
-
 // Initialize application
 function initialize() {
   // Initialize default oscillator names from variable_names
@@ -3544,7 +3662,8 @@ function initialize() {
   syncUIFromText();
 }
 
-// Note: initialize() is now called inside DOMContentLoaded event handler
+// Start initialization
+initialize();
 
 // Clear highlight when mouse is released (for slider highlighting)
 document.addEventListener('mouseup', () => {
@@ -3560,10 +3679,10 @@ let slashBlock = null; // Store the block where slash was pressed
 let selectedCommandIndex = 0;
 let filteredCommandsList = [];
 
-// DOM elements (initialized after DOM loads)
-let commandModal;
-let commandSearch;
-let commandList;
+// DOM elements
+const commandModal = document.getElementById('command-modal');
+const commandSearch = document.getElementById('command-search');
+const commandList = document.getElementById('command-list');
 
 // Text size and line spacing state (stored in CSS custom properties)
 let currentFontSize = 14; // Default from CSS
@@ -3983,27 +4102,12 @@ const commands = [
     name: "New Filter",
     description: "Create a low-pass filter section",
     action: () => {
-      // Get all existing names (oscillators, LFOs, filters, envelopes, etc.)
-      const existingNames = Array.from(parametersTextbox.querySelectorAll('.block-content'))
-        .map(block => {
-          const text = block.textContent.trim();
-          const oscMatch = text.match(/^oscillator\s+(\w+)/);
-          const lfoMatch = text.match(/^lfo\s+(\w+)/);
-          const filterMatch = text.match(/^filter\s+(\w+)/);
-          const envMatch = text.match(/^envelope\s+(\w+)/);
-          return oscMatch ? oscMatch[1] : (lfoMatch ? lfoMatch[1] : (filterMatch ? filterMatch[1] : (envMatch ? envMatch[1] : null)));
-        })
-        .filter(name => name !== null);
-
-      // Get a random unused name
-      const filterName = getRandomUnusedName(existingNames);
-
       const targetBlock = slashBlock;
 
       // Create the new filter blocks
-      const filterHeaderBlock = createBlock(`filter ${filterName}`);
-      const frequencyBlock = createBlock(`  frequency 2000`);
-      const resonanceBlock = createBlock(`  resonance 1`);
+      const filterHeaderBlock = createBlock(`filter`);
+      const frequencyBlock = createBlock(`  filter frequency 2000`);
+      const resonanceBlock = createBlock(`  filter resonance 1`);
 
       // Insert the blocks
       if (targetBlock) {
@@ -4236,10 +4340,165 @@ function executeCommand(command) {
   }, 10);
 }
 
-// Slash command handlers have been moved to registerCommandModalListeners()
-// This code is now properly initialized in DOMContentLoaded
+// Keyboard event handler for slash detection in parameters textbox
+const originalKeydownHandler = parametersTextbox.onkeydown;
+parametersTextbox.addEventListener("keydown", (event) => {
+  // Handle slash to open command modal
+  if (event.key === "/" && !commandModalOpen) {
+    event.preventDefault();
 
-// Global keyboard shortcuts for commands (registered outside conditional)
+    const selection = window.getSelection();
+    let range;
+
+    if (selection.rangeCount > 0) {
+      range = selection.getRangeAt(0);
+    } else {
+      range = document.createRange();
+      range.selectNodeContents(parametersTextbox);
+      range.collapse(false);
+    }
+
+    // Store the cursor position
+    slashPosition = {
+      node: range.startContainer,
+      offset: range.startOffset
+    };
+
+    // Store the current block for commands that need to know where to insert
+    slashBlock = getCurrentBlock();
+
+    showCommandModal();
+    return;
+  }
+
+  // Close modal on space (insert the slash now)
+  if (event.key === " " && commandModalOpen) {
+    event.preventDefault();
+    if (slashPosition && slashPosition.node) {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      const textNode = document.createTextNode("/");
+      range.setStart(slashPosition.node, slashPosition.offset);
+      range.collapse(true);
+      range.insertNode(textNode);
+      range.setStartAfter(textNode);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    hideCommandModal();
+    parametersTextbox.focus();
+    return;
+  }
+
+  // Close modal on / (slash) without inserting
+  if (event.key === "/" && commandModalOpen) {
+    event.preventDefault();
+    hideCommandModal();
+    parametersTextbox.focus();
+    return;
+  }
+
+  // Navigate commands with arrow keys
+  if (commandModalOpen && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+    event.preventDefault();
+    const commandItems = commandList.querySelectorAll(".command-item:not(.no-results)");
+
+    if (event.key === "ArrowDown") {
+      selectedCommandIndex = (selectedCommandIndex + 1) % commandItems.length;
+    } else {
+      selectedCommandIndex = (selectedCommandIndex - 1 + commandItems.length) % commandItems.length;
+    }
+
+    commandItems.forEach((item, index) => {
+      item.classList.toggle("selected", index === selectedCommandIndex);
+    });
+
+    commandItems[selectedCommandIndex]?.scrollIntoView({ block: "nearest" });
+    return;
+  }
+
+  // Execute command on Enter
+  if (commandModalOpen && event.key === "Enter") {
+    event.preventDefault();
+    if (filteredCommandsList[selectedCommandIndex]) {
+      executeCommand(filteredCommandsList[selectedCommandIndex]);
+    }
+    return;
+  }
+}, true); // Use capture phase to handle before other handlers
+
+// Command search input event listeners
+commandSearch.addEventListener("input", (event) => {
+  filterCommands(event.target.value);
+});
+
+commandSearch.addEventListener("keydown", (event) => {
+  // Close modal on space
+  if (event.key === " " && commandSearch.value === "") {
+    event.preventDefault();
+    if (slashPosition && slashPosition.node) {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      const textNode = document.createTextNode("/");
+      range.setStart(slashPosition.node, slashPosition.offset);
+      range.collapse(true);
+      range.insertNode(textNode);
+      range.setStartAfter(textNode);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    hideCommandModal();
+    parametersTextbox.focus();
+    return;
+  }
+
+  // Close modal on /
+  if (event.key === "/") {
+    event.preventDefault();
+    hideCommandModal();
+    parametersTextbox.focus();
+    return;
+  }
+
+  // Navigate with arrow keys
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    const commandItems = commandList.querySelectorAll(".command-item:not(.no-results)");
+
+    if (event.key === "ArrowDown") {
+      selectedCommandIndex = (selectedCommandIndex + 1) % commandItems.length;
+    } else {
+      selectedCommandIndex = (selectedCommandIndex - 1 + commandItems.length) % commandItems.length;
+    }
+
+    commandItems.forEach((item, index) => {
+      item.classList.toggle("selected", index === selectedCommandIndex);
+    });
+
+    commandItems[selectedCommandIndex]?.scrollIntoView({ block: "nearest" });
+    return;
+  }
+
+  // Execute command on Enter
+  if (event.key === "Enter") {
+    event.preventDefault();
+    if (filteredCommandsList[selectedCommandIndex]) {
+      executeCommand(filteredCommandsList[selectedCommandIndex]);
+    }
+    return;
+  }
+});
+
+// Click outside to close modal
+document.addEventListener("click", (event) => {
+  if (commandModalOpen && !commandModal.contains(event.target) && event.target !== parametersTextbox) {
+    hideCommandModal();
+  }
+});
+
+// Global keyboard shortcuts for commands
 document.addEventListener("keydown", (event) => {
   const modifier = event.metaKey || event.ctrlKey;
 
@@ -4247,9 +4506,7 @@ document.addEventListener("keydown", (event) => {
   if (modifier && event.key === "=" && !event.shiftKey) {
     event.preventDefault();
     currentFontSize = Math.min(currentFontSize + 2, 32);
-    if (parametersTextbox) {
-      parametersTextbox.style.fontSize = `${currentFontSize}px`;
-    }
+    parametersTextbox.style.fontSize = `${currentFontSize}px`;
     return;
   }
 
@@ -4257,9 +4514,7 @@ document.addEventListener("keydown", (event) => {
   if (modifier && event.key === "-" && !event.shiftKey) {
     event.preventDefault();
     currentFontSize = Math.max(currentFontSize - 2, 8);
-    if (parametersTextbox) {
-      parametersTextbox.style.fontSize = `${currentFontSize}px`;
-    }
+    parametersTextbox.style.fontSize = `${currentFontSize}px`;
     return;
   }
 
@@ -4267,9 +4522,7 @@ document.addEventListener("keydown", (event) => {
   if (modifier && event.key === "]") {
     event.preventDefault();
     currentLineHeight = Math.min(currentLineHeight + 0.2, 3);
-    if (parametersTextbox) {
-      parametersTextbox.style.lineHeight = currentLineHeight;
-    }
+    parametersTextbox.style.lineHeight = currentLineHeight;
     return;
   }
 
@@ -4277,9 +4530,7 @@ document.addEventListener("keydown", (event) => {
   if (modifier && event.key === "[") {
     event.preventDefault();
     currentLineHeight = Math.max(currentLineHeight - 0.2, 1);
-    if (parametersTextbox) {
-      parametersTextbox.style.lineHeight = currentLineHeight;
-    }
+    parametersTextbox.style.lineHeight = currentLineHeight;
     return;
   }
 
@@ -4293,4 +4544,38 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
+});
+
+// Track cursor position to update UI for current block
+parametersTextbox.addEventListener('click', () => {
+  // Small delay to ensure cursor position is updated
+  setTimeout(() => {
+    updateUIForCurrentBlock();
+  }, 10);
+});
+
+parametersTextbox.addEventListener('keyup', (e) => {
+  // Update UI on navigation keys
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) {
+    updateUIForCurrentBlock();
+  }
+});
+
+// Track selection changes (for mouse selection, focus changes, etc.)
+// Debounce to avoid excessive updates
+let selectionChangeTimeout = null;
+document.addEventListener('selectionchange', () => {
+  if (selectionChangeTimeout) {
+    clearTimeout(selectionChangeTimeout);
+  }
+  selectionChangeTimeout = setTimeout(() => {
+    const selection = window.getSelection();
+    if (selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      // Check if selection is within parametersTextbox
+      if (parametersTextbox.contains(range.commonAncestorContainer)) {
+        updateUIForCurrentBlock();
+      }
+    }
+  }, 100); // 100ms debounce
 });
