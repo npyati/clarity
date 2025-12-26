@@ -82,7 +82,9 @@ const COMPONENT_SCHEMAS = {
         default: 0,
         unit: 'cents',
         description: 'Fine pitch adjustment',
-        ui: { control: 'slider' }
+        ui: { control: 'slider' },
+        canReference: [AttributeType.VARIABLE_REF],
+        acceptsModulation: ['lfo', 'envelope', 'noise']
       },
       volume: {
         type: AttributeType.PERCENTAGE,
@@ -92,15 +94,20 @@ const COMPONENT_SCHEMAS = {
         default: 50,
         description: 'Oscillator volume',
         ui: { control: 'slider' },
-        canReference: [AttributeType.VARIABLE_REF, AttributeType.COMPONENT_REF],
-        acceptsModulation: ['lfo', 'envelope']
+        canReference: [AttributeType.VARIABLE_REF],
+        acceptsModulation: ['lfo', 'envelope', 'noise']
       },
       pitch: {
-        type: AttributeType.COMPONENT_REF,
-        acceptsComponents: ['lfo'],
-        description: 'Pitch modulation source',
-        modulationMode: 'additive',
-        unit: 'cents'
+        type: AttributeType.INTEGER,
+        min: -1200,
+        max: 1200,
+        step: 1,
+        default: 0,
+        unit: 'cents',
+        description: 'Pitch offset in cents (base detune before modulation)',
+        ui: { control: 'slider' },
+        canReference: [AttributeType.VARIABLE_REF],
+        acceptsModulation: ['lfo', 'envelope', 'noise']
       },
       attack: {
         type: AttributeType.TIME_MS,
@@ -171,6 +178,35 @@ const COMPONENT_SCHEMAS = {
     }
   },
 
+  noise: {
+    role: ComponentRole.MODULATOR,
+    description: 'Random noise modulation for organic drift',
+    attributes: {
+      rate: {
+        type: AttributeType.NUMBER,
+        min: 0.01,
+        max: 10,
+        step: 0.01,
+        default: 0.5,
+        unit: 'Hz',
+        description: 'Rate of random value changes (lower = slower drift)',
+        ui: { control: 'slider' },
+        canReference: [AttributeType.VARIABLE_REF]
+      },
+      depth: {
+        type: AttributeType.NUMBER,
+        min: 0,
+        max: 100,
+        step: 1,
+        default: 2,
+        unit: 'cents',
+        description: 'Maximum deviation from base value',
+        ui: { control: 'slider' },
+        canReference: [AttributeType.VARIABLE_REF]
+      }
+    }
+  },
+
   envelope: {
     role: ComponentRole.MODULATOR,
     description: 'ADSR envelope for modulation',
@@ -218,9 +254,9 @@ const COMPONENT_SCHEMAS = {
     }
   },
 
-  filter: {
+  lowpass: {
     role: ComponentRole.PROCESSOR,
-    description: 'Audio filter',
+    description: 'Low-pass filter',
     attributes: {
       frequency: {
         type: AttributeType.FREQUENCY,
@@ -231,8 +267,8 @@ const COMPONENT_SCHEMAS = {
         unit: 'Hz',
         description: 'Filter cutoff frequency',
         ui: { control: 'slider' },
-        canReference: [AttributeType.VARIABLE_REF, AttributeType.COMPONENT_REF],
-        acceptsModulation: ['lfo', 'envelope']
+        canReference: [AttributeType.VARIABLE_REF],
+        acceptsModulation: ['lfo', 'envelope', 'noise']
       },
       resonance: {
         type: AttributeType.NUMBER,
@@ -242,8 +278,98 @@ const COMPONENT_SCHEMAS = {
         default: 1,
         description: 'Filter resonance (Q factor)',
         ui: { control: 'slider' },
-        canReference: [AttributeType.VARIABLE_REF, AttributeType.COMPONENT_REF],
-        acceptsModulation: ['lfo', 'envelope']
+        canReference: [AttributeType.VARIABLE_REF],
+        acceptsModulation: ['lfo', 'envelope', 'noise']
+      }
+    }
+  },
+
+  highpass: {
+    role: ComponentRole.PROCESSOR,
+    description: 'High-pass filter',
+    attributes: {
+      frequency: {
+        type: AttributeType.FREQUENCY,
+        min: 20,
+        max: 20000,
+        step: 1,
+        default: 20000,
+        unit: 'Hz',
+        description: 'Filter cutoff frequency',
+        ui: { control: 'slider' },
+        canReference: [AttributeType.VARIABLE_REF],
+        acceptsModulation: ['lfo', 'envelope', 'noise']
+      },
+      resonance: {
+        type: AttributeType.NUMBER,
+        min: 0.0001,
+        max: 20,
+        step: 0.1,
+        default: 1,
+        description: 'Filter resonance (Q factor)',
+        ui: { control: 'slider' },
+        canReference: [AttributeType.VARIABLE_REF],
+        acceptsModulation: ['lfo', 'envelope', 'noise']
+      }
+    }
+  },
+
+  bandpass: {
+    role: ComponentRole.PROCESSOR,
+    description: 'Band-pass filter',
+    attributes: {
+      frequency: {
+        type: AttributeType.FREQUENCY,
+        min: 20,
+        max: 20000,
+        step: 1,
+        default: 2000,
+        unit: 'Hz',
+        description: 'Filter center frequency',
+        ui: { control: 'slider' },
+        canReference: [AttributeType.VARIABLE_REF],
+        acceptsModulation: ['lfo', 'envelope', 'noise']
+      },
+      resonance: {
+        type: AttributeType.NUMBER,
+        min: 0.0001,
+        max: 20,
+        step: 0.1,
+        default: 1,
+        description: 'Filter resonance (Q factor)',
+        ui: { control: 'slider' },
+        canReference: [AttributeType.VARIABLE_REF],
+        acceptsModulation: ['lfo', 'envelope', 'noise']
+      }
+    }
+  },
+
+  notch: {
+    role: ComponentRole.PROCESSOR,
+    description: 'Notch filter (band-stop)',
+    attributes: {
+      frequency: {
+        type: AttributeType.FREQUENCY,
+        min: 20,
+        max: 20000,
+        step: 1,
+        default: 2000,
+        unit: 'Hz',
+        description: 'Filter notch frequency',
+        ui: { control: 'slider' },
+        canReference: [AttributeType.VARIABLE_REF],
+        acceptsModulation: ['lfo', 'envelope', 'noise']
+      },
+      resonance: {
+        type: AttributeType.NUMBER,
+        min: 0.0001,
+        max: 20,
+        step: 0.1,
+        default: 1,
+        description: 'Filter resonance (Q factor)',
+        ui: { control: 'slider' },
+        canReference: [AttributeType.VARIABLE_REF],
+        acceptsModulation: ['lfo', 'envelope', 'noise']
       }
     }
   },
@@ -327,7 +453,8 @@ const TRIGGER_SCHEMAS = {
         default: 80,
         description: 'Master volume',
         ui: { control: 'slider' },
-        canReference: [AttributeType.VARIABLE_REF]
+        canReference: [AttributeType.VARIABLE_REF],
+        acceptsModulation: ['lfo', 'envelope', 'noise']
       },
       attack: {
         type: AttributeType.TIME_MS,
@@ -337,7 +464,8 @@ const TRIGGER_SCHEMAS = {
         default: 100,
         description: 'Master attack time',
         ui: { control: 'slider', label: 'attack time' },
-        canReference: [AttributeType.VARIABLE_REF]
+        canReference: [AttributeType.VARIABLE_REF],
+        acceptsModulation: ['lfo', 'envelope', 'noise']
       },
       decay: {
         type: AttributeType.TIME_MS,
@@ -347,7 +475,8 @@ const TRIGGER_SCHEMAS = {
         default: 100,
         description: 'Master decay time',
         ui: { control: 'slider', label: 'decay time' },
-        canReference: [AttributeType.VARIABLE_REF]
+        canReference: [AttributeType.VARIABLE_REF],
+        acceptsModulation: ['lfo', 'envelope', 'noise']
       },
       sustain: {
         type: AttributeType.PERCENTAGE,
@@ -357,7 +486,8 @@ const TRIGGER_SCHEMAS = {
         default: 100,
         description: 'Master sustain level',
         ui: { control: 'slider', label: 'sustain level' },
-        canReference: [AttributeType.VARIABLE_REF]
+        canReference: [AttributeType.VARIABLE_REF],
+        acceptsModulation: ['lfo', 'envelope', 'noise']
       },
       release: {
         type: AttributeType.TIME_MS,
@@ -367,11 +497,12 @@ const TRIGGER_SCHEMAS = {
         default: 500,
         description: 'Master release time',
         ui: { control: 'slider', label: 'release time' },
-        canReference: [AttributeType.VARIABLE_REF]
+        canReference: [AttributeType.VARIABLE_REF],
+        acceptsModulation: ['lfo', 'envelope', 'noise']
       },
       filter: {
         type: AttributeType.COMPONENT_REF,
-        acceptsComponents: ['filter'],
+        acceptsComponents: ['lowpass', 'highpass', 'bandpass', 'notch'],
         description: 'Master filter'
       },
       compressor: {
@@ -406,9 +537,35 @@ const TRIGGER_SCHEMAS = {
   key: {
     description: 'Key-triggered scope',
     requiresName: true,
-    canHaveAttributes: false,
+    canHaveAttributes: true,
     canContainComponents: true,
-    canOverrideVariables: true
+    canOverrideVariables: true,
+    attributes: {
+      pitch: {
+        type: AttributeType.INTEGER,
+        min: -1200,
+        max: 1200,
+        step: 1,
+        default: 0,
+        unit: 'cents',
+        description: 'Pitch offset applied when key is held',
+        ui: { control: 'slider' },
+        canReference: [AttributeType.VARIABLE_REF],
+        acceptsModulation: ['lfo', 'envelope', 'noise']
+      },
+      volume: {
+        type: AttributeType.PERCENTAGE,
+        min: 0,
+        max: 100,
+        step: 1,
+        default: 50,
+        unit: '%',
+        description: 'Volume level applied when key is held',
+        ui: { control: 'slider' },
+        canReference: [AttributeType.VARIABLE_REF],
+        acceptsModulation: ['lfo', 'envelope', 'noise']
+      }
+    }
   }
 };
 

@@ -39,8 +39,20 @@
       <div id="parameters"></div>
     </div>
 
-    <!-- Right Pane: Controls -->
+    <!-- Middle Pane: Instrument Controls -->
+    <div class="middle-pane">
+      <div class="pane-header">instrument panel</div>
+      <!-- Dynamic oscillator/component sections generated from text -->
+      <div id="oscillators-container"></div>
+    </div>
+
+    <!-- Right Pane: Visualizer & Input -->
     <div class="right-pane">
+      <!-- Audio Visualizer -->
+      <div id="waveform-container" class="waveform-container">
+        <canvas id="waveform-canvas"></canvas>
+      </div>
+
       <!-- Note Display -->
       <div id="note-display" class="note-display">
         <span id="note-display-text">--</span>
@@ -102,9 +114,6 @@
           </div>
         </div>
       </div>
-
-      <!-- Dynamic oscillator sections generated from text -->
-      <div id="oscillators-container"></div>
 
       <!-- Hidden template sections (kept for backwards compatibility but not used) -->
       <div class="controls-section hidden" id="osc1-section">
@@ -197,6 +206,7 @@
   <script src="parser.js"></script>
   <script src="audio-engine.js"></script>
   <script src="ui-generator.js"></script>
+  <script src="visualizer.js"></script>
   <!-- Main application script -->
   <script src="script.js"></script>
 </body>

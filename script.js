@@ -134,6 +134,7 @@ function buildChordIntervals() {
 
 // Flag to prevent UI updates from triggering text regeneration
 let isUpdatingFromText = false;
+let lastUIUpdateTime = 0; // Timestamp of last UI control change
 
 // Create a dynamic oscillator section with controls
 function createOscillatorSection(name, index, config) {
@@ -496,68 +497,6 @@ function createVariablesSection() {
     container.appendChild(slider);
     section.appendChild(container);
   });
-
-  return section;
-}
-
-// Create a filter section with controls
-function createFilterSection() {
-  const section = document.createElement('div');
-  section.className = 'controls-section';
-  section.id = 'filter-section';
-
-  const header = document.createElement('h2');
-  header.textContent = 'filter';
-  // Mark as default if ALL filter params are default
-  const allDefault = globalConfig.filter.frequency.isDefault &&
-                      globalConfig.filter.resonance.isDefault;
-  if (allDefault) {
-    header.classList.add('default-param');
-    header.title = 'Using default values (not in document)';
-  }
-  section.appendChild(header);
-
-  // Frequency
-  const frequencyContainer = document.createElement('div');
-  frequencyContainer.className = 'slider-container';
-  const frequencyLabel = document.createElement('label');
-  frequencyLabel.textContent = 'frequency';
-  const frequencySlider = document.createElement('input');
-  frequencySlider.type = 'range';
-  frequencySlider.min = '20';
-  frequencySlider.max = '20000';
-  frequencySlider.step = '1';
-  frequencySlider.value = globalConfig.filter.frequency.value;
-  frequencySlider.addEventListener('input', () => {
-    if (!isUpdatingFromText) {
-      updateParameterInBlocks('filter frequency', frequencySlider.value);
-    }
-    filter.frequency.value = parseFloat(frequencySlider.value);
-  });
-  frequencyContainer.appendChild(frequencyLabel);
-  frequencyContainer.appendChild(frequencySlider);
-  section.appendChild(frequencyContainer);
-
-  // Resonance (Q factor)
-  const resonanceContainer = document.createElement('div');
-  resonanceContainer.className = 'slider-container';
-  const resonanceLabel = document.createElement('label');
-  resonanceLabel.textContent = 'resonance';
-  const resonanceSlider = document.createElement('input');
-  resonanceSlider.type = 'range';
-  resonanceSlider.min = '0.0001';
-  resonanceSlider.max = '20';
-  resonanceSlider.step = '0.1';
-  resonanceSlider.value = globalConfig.filter.resonance.value;
-  resonanceSlider.addEventListener('input', () => {
-    if (!isUpdatingFromText) {
-      updateParameterInBlocks('filter resonance', resonanceSlider.value);
-    }
-    filter.Q.value = parseFloat(resonanceSlider.value);
-  });
-  resonanceContainer.appendChild(resonanceLabel);
-  resonanceContainer.appendChild(resonanceSlider);
-  section.appendChild(resonanceContainer);
 
   return section;
 }
@@ -1108,6 +1047,52 @@ function updateLFOParameterInBlocks(lfoName, parameterName, value) {
 // ============================================================================
 // NEW SYNC FUNCTION - Uses parser + UI generator
 // ============================================================================
+// Sync just the store and audio engine from text (no UI rebuild)
+// Used for value changes where UI structure doesn't change
+function syncStoreFromText() {
+  // Check if systems are initialized
+  if (!parser) {
+    console.warn('Parser not initialized yet');
+    return;
+  }
+
+  const text = getAllBlocksText();
+
+  // Set flag to prevent circular updates
+  isUpdatingFromText = true;
+
+  try {
+    // Parse document with new parser to update instance store
+    const result = parser.parse(text);
+
+    if (!result.success) {
+      console.error('Parse errors:', result.errors);
+    }
+
+    if (result.warnings.length > 0) {
+      console.warn('Parse warnings:', result.warnings);
+    }
+
+    // Update audio engine master chain
+    if (audioEngine) {
+      audioEngine.initializeMaster();
+
+      // Reconnect visualizer since master was reinitialized
+      if (waveformVisualizer && audioEngine.audioContext.state === 'running') {
+        waveformVisualizer.isConnected = false; // Reset connection flag
+        waveformVisualizer.ensureConnected();
+      }
+    }
+  } catch (error) {
+    console.error('Error in syncStoreFromText:', error);
+  }
+
+  // Clear flag
+  isUpdatingFromText = false;
+}
+
+// Sync UI, store, and audio engine from text (full rebuild)
+// Used for structural changes like adding/removing components
 function syncUIFromText() {
   // Check if systems are initialized
   if (!parser || !uiGenerator) {
@@ -1139,6 +1124,12 @@ function syncUIFromText() {
     // Update audio engine master chain
     if (audioEngine) {
       audioEngine.initializeMaster();
+
+      // Reconnect visualizer since master was reinitialized
+      if (waveformVisualizer && audioEngine.audioContext.state === 'running') {
+        waveformVisualizer.isConnected = false; // Reset connection flag
+        waveformVisualizer.ensureConnected();
+      }
     }
   } catch (error) {
     console.error('Error in syncUIFromText:', error);
@@ -1157,14 +1148,19 @@ function updateUIForCurrentBlock() {
   const currentBlock = getCurrentBlock();
   if (!currentBlock) {
     // No current block, show all
+    console.log('[Panel] No current block, showing all UI');
     uiGenerator.setUpdatingFromText(true);
     uiGenerator.generateUI(oscillatorsContainer);
     uiGenerator.setUpdatingFromText(false);
     return;
   }
 
+  const blockContent = currentBlock.querySelector('.block-content');
+  // console.log('[Panel] Current block content:', blockContent ? `"${blockContent.textContent}"` : 'null');
+
   // Determine what component/trigger this block belongs to
   const currentContext = getCurrentComponentContext(currentBlock);
+  // console.log('[Panel] Current context:', currentContext);
 
   // Set UI generator flag
   uiGenerator.setUpdatingFromText(true);
@@ -1178,14 +1174,32 @@ function updateUIForCurrentBlock() {
 
 // Get the component/trigger context for the current block
 function getCurrentComponentContext(block) {
-  const blocks = Array.from(parametersTextbox.querySelectorAll('.block'));
-  const currentIndex = blocks.indexOf(block);
+  try {
+    // console.log('[Panel] getCurrentComponentContext called');
+
+    if (!parametersTextbox) {
+      // console.log('[Panel] parametersTextbox is null!');
+      return null;
+    }
+
+    const blocks = Array.from(parametersTextbox.querySelectorAll('.block'));
+    const currentIndex = blocks.indexOf(block);
+    // console.log('[Panel] Current block index:', currentIndex);
 
   // If current block is empty/blank, don't show any controls
   const currentContent = block.querySelector('.block-content');
-  if (currentContent && currentContent.textContent.trim() === '') {
+
+  if (!currentContent) {
+    // console.log('[Panel] No block content element found, returning null');
     return null;
   }
+
+  if (currentContent.textContent.trim() === '') {
+    // console.log('[Panel] Current block is empty, returning null');
+    return null;
+  }
+
+  // console.log('[Panel] Searching for context starting from block:', currentContent.textContent.trim());
 
   // Walk backwards from current block to find the component/trigger header
   for (let i = currentIndex; i >= 0; i--) {
@@ -1194,21 +1208,24 @@ function getCurrentComponentContext(block) {
 
     const text = content.textContent.trim();
 
-    // Check if this is a component header (oscillator, lfo, envelope, filter, compressor)
-    const componentMatch = text.match(/^(oscillator|lfo|envelope|filter|compressor)\s+(.+)$/);
+    // Check if this is a component header (oscillator, lfo, envelope, lowpass, highpass, bandpass, notch, compressor)
+    const componentMatch = text.match(/^(oscillator|lfo|envelope|lowpass|highpass|bandpass|notch|compressor)\s+(.+)$/);
     if (componentMatch) {
+      // console.log('[Panel] Found component:', componentMatch[1], componentMatch[2]);
       return { type: 'component', componentType: componentMatch[1], name: componentMatch[2] };
     }
 
     // Check if this is a trigger header (master, note, key)
     const triggerMatch = text.match(/^(master|note|key)(?:\s+(.+))?$/);
     if (triggerMatch) {
+      // console.log('[Panel] Found trigger:', triggerMatch[1], triggerMatch[2] || '');
       return { type: 'trigger', triggerType: triggerMatch[1], name: triggerMatch[2] || '' };
     }
 
     // Check if this is a variable
     const variableMatch = text.match(/^variable\s+(\w+)/);
     if (variableMatch) {
+      // console.log('[Panel] Found variable:', variableMatch[1]);
       // Find all consecutive variables in this group
       const variableGroup = [];
 
@@ -1265,14 +1282,17 @@ function getCurrentComponentContext(block) {
 
   // Default to showing all
   return null;
+  } catch (error) {
+    console.error('[Panel] Error in getCurrentComponentContext:', error);
+    return null;
+  }
 }
 
 // Bridge function for UI generator to update text from UI changes
 window.updateTextFromUIChange = function(componentOrTrigger, name, attribute, value) {
-  console.log('updateTextFromUIChange called:', componentOrTrigger, name, attribute, value);
-
   // Set flag to prevent circular updates
   isUpdatingFromText = true;
+  lastUIUpdateTime = Date.now(); // Track when UI controls are being used
 
   try {
     // Find the block for this component/trigger and attribute
@@ -1299,6 +1319,13 @@ window.updateTextFromUIChange = function(componentOrTrigger, name, attribute, va
           content.textContent = newText;
           formatBlock(block);
           console.log('Updated variable:', name, 'to', value);
+
+          // Clear flag before calling syncUIFromText to allow audio engine update
+          isUpdatingFromText = false;
+
+          // Update audio engine with new value
+          syncUIFromText();
+
           return true;
         }
       }
@@ -1340,6 +1367,14 @@ window.updateTextFromUIChange = function(componentOrTrigger, name, attribute, va
           content.textContent = `  ${attribute} ${value}`;
           formatBlock(block);
           console.log('Updated', componentOrTrigger, name, attribute, 'to', value);
+
+          // Clear flag before syncing to allow audio engine update
+          isUpdatingFromText = false;
+
+          // Update store and audio engine without rebuilding UI
+          // This prevents sliders from losing focus on value changes
+          syncStoreFromText();
+
           return true;
         }
       }
@@ -1380,6 +1415,22 @@ class PolyphonyManager {
   startNote(frequency, noteId, velocity = 127, isSynthetic = false, midiNote = null, keyChar = null) {
     if (this.activeNotes.has(noteId)) {
       this.stopNote(noteId);
+    }
+
+    // Resume audio context if suspended (required by browser autoplay policies)
+    if (audioEngine && audioEngine.audioContext.state === 'suspended') {
+      audioEngine.audioContext.resume().then(() => {
+        console.log('[PolyphonyManager] Audio context resumed');
+        // Connect visualizer now that context is running
+        if (waveformVisualizer) {
+          waveformVisualizer.ensureConnected();
+        }
+      });
+    } else {
+      // Context is already running, ensure visualizer is connected
+      if (waveformVisualizer) {
+        waveformVisualizer.ensureConnected();
+      }
     }
 
     // Convert MIDI note or frequency to note name (e.g., 'c4')
@@ -1805,6 +1856,10 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('Initializing new architecture...');
     initializeNewArchitecture();
 
+    // Initialize waveform visualizer AFTER audio engine
+    console.log('Initializing waveform visualizer...');
+    initializeVisualizer();
+
     // Polyphony Manager
     console.log('Creating polyphony manager...');
     polyphonyManager = new PolyphonyManager();
@@ -2007,6 +2062,15 @@ function formatBlock(block) {
     return;
   }
 
+  // Check if this is a noise header line (e.g., "noise drift")
+  const noiseMatch = trimmed.match(/^noise\s+(.+)$/i);
+  if (noiseMatch) {
+    const noiseName = noiseMatch[1];
+    content.innerHTML = `${leadingSpaces}<span class="syntax-key">noise</span> <span class="syntax-oscillator">${noiseName}</span>`;
+    setCursorPositionInBlock(content, cursorPos);
+    return;
+  }
+
   // Check if this is a note header line (e.g., "note c3")
   const noteMatch = trimmed.match(/^note\s+(.+)$/i);
   if (noteMatch) {
@@ -2037,11 +2101,38 @@ function formatBlock(block) {
     return;
   }
 
-  // Check if this is a named filter header line (e.g., "filter myfilter")
-  const namedFilterMatch = trimmed.match(/^filter\s+(.+)$/i);
-  if (namedFilterMatch) {
-    const filterName = namedFilterMatch[1];
-    content.innerHTML = `${leadingSpaces}<span class="syntax-key">filter</span> <span class="syntax-oscillator">${filterName}</span>`;
+  // Check if this is a lowpass filter header line (e.g., "lowpass myfilter")
+  const lowpassMatch = trimmed.match(/^lowpass\s+(.+)$/i);
+  if (lowpassMatch) {
+    const filterName = lowpassMatch[1];
+    content.innerHTML = `${leadingSpaces}<span class="syntax-key">lowpass</span> <span class="syntax-oscillator">${filterName}</span>`;
+    setCursorPositionInBlock(content, cursorPos);
+    return;
+  }
+
+  // Check if this is a highpass filter header line (e.g., "highpass myfilter")
+  const highpassMatch = trimmed.match(/^highpass\s+(.+)$/i);
+  if (highpassMatch) {
+    const filterName = highpassMatch[1];
+    content.innerHTML = `${leadingSpaces}<span class="syntax-key">highpass</span> <span class="syntax-oscillator">${filterName}</span>`;
+    setCursorPositionInBlock(content, cursorPos);
+    return;
+  }
+
+  // Check if this is a bandpass filter header line (e.g., "bandpass myfilter")
+  const bandpassMatch = trimmed.match(/^bandpass\s+(.+)$/i);
+  if (bandpassMatch) {
+    const filterName = bandpassMatch[1];
+    content.innerHTML = `${leadingSpaces}<span class="syntax-key">bandpass</span> <span class="syntax-oscillator">${filterName}</span>`;
+    setCursorPositionInBlock(content, cursorPos);
+    return;
+  }
+
+  // Check if this is a notch filter header line (e.g., "notch myfilter")
+  const notchMatch = trimmed.match(/^notch\s+(.+)$/i);
+  if (notchMatch) {
+    const filterName = notchMatch[1];
+    content.innerHTML = `${leadingSpaces}<span class="syntax-key">notch</span> <span class="syntax-oscillator">${filterName}</span>`;
     setCursorPositionInBlock(content, cursorPos);
     return;
   }
@@ -2104,6 +2195,15 @@ function formatBlock(block) {
       return;
     }
     // If we get here, it's just "variable" with no name - don't format
+  }
+
+  // Check if this is a modulation line (e.g., "modulation vibrato")
+  const modulationMatch = trimmed.match(/^modulation\s+(.+)$/i);
+  if (modulationMatch) {
+    const modulatorName = modulationMatch[1];
+    content.innerHTML = `${leadingSpaces}<span class="syntax-key">modulation</span> <span class="syntax-oscillator">${modulatorName}</span>`;
+    setCursorPositionInBlock(content, cursorPos);
+    return;
   }
 
   // Try to match against known parameter keys (excluding 'variable' which we handled above)
@@ -2226,10 +2326,6 @@ function focusBlock(blockElement, atEnd = false) {
 function initializeBlocks() {
   const initialLines = [];
 
-  // Create default document using new architecture syntax
-  initialLines.push('# Welcome to Clarity');
-  initialLines.push('');
-
   // Vibrato controls
   initialLines.push('variable vibrato_depth = 20');
   initialLines.push('variable vibrato_rate = 5');
@@ -2242,10 +2338,11 @@ function initializeBlocks() {
 
   // Lead oscillator with LFO modulation
   initialLines.push('oscillator lead');
-  initialLines.push('  wave sawtooth');
+  initialLines.push('  wave triangle');
   initialLines.push('  octave 0');
   initialLines.push('  volume lead_volume');
-  initialLines.push('  pitch vibrato');
+  initialLines.push('  pitch 0');
+  initialLines.push('    modulation vibrato');
   initialLines.push('');
 
   // Bass oscillator
@@ -2395,14 +2492,6 @@ function updateParameterInBlocks(parameterName, newValue, oscIndex = -1) {
             } else if (parameterName === 'envelope release time' && nextTrimmed.startsWith('release time ')) {
               shouldUpdate = true;
               nextContent.textContent = `  release time ${newValue}`;
-            }
-          } else if (sectionType === 'filter') {
-            if (parameterName === 'filter frequency' && nextTrimmed.startsWith('filter frequency ')) {
-              shouldUpdate = true;
-              nextContent.textContent = `  filter frequency ${newValue}`;
-            } else if (parameterName === 'filter resonance' && nextTrimmed.startsWith('filter resonance ')) {
-              shouldUpdate = true;
-              nextContent.textContent = `  filter resonance ${newValue}`;
             }
           } else if (sectionType === 'compressor') {
             if (parameterName === 'compressor threshold' && nextTrimmed.startsWith('threshold ')) {
@@ -2946,6 +3035,15 @@ function registerCommandModalListeners() {
   console.log('Command modal listeners registered');
 }
 
+/**
+ * Visualizer now shows real-time audio output - no cursor tracking needed
+ */
+function updateVisualizerFromCursor() {
+  // Visualizer is always-on showing real-time audio
+  // But we still need to update the instrument panel based on cursor position
+  updateUIForCurrentBlock();
+}
+
 // Register all event listeners (called after DOM is ready)
 function registerEventListeners() {
   if (!parametersTextbox) {
@@ -3010,19 +3108,34 @@ parametersTextbox.addEventListener("keydown", (e) => {
           selection.removeAllRanges();
           selection.addRange(targetRange);
           updateUIForCurrentBlock();
+          updateVisualizerFromCursor();
         } else {
           // Fall back to beginning/end of target block
           focusBlock(targetBlock, isUp);
           updateUIForCurrentBlock();
+          updateVisualizerFromCursor();
         }
       } else {
         // No content element, just focus the block
         focusBlock(targetBlock, isUp);
         updateUIForCurrentBlock();
+        updateVisualizerFromCursor();
       }
     }
   }
 });
+
+  // Update visualizer on click and cursor movement
+  parametersTextbox.addEventListener('click', () => {
+    updateVisualizerFromCursor();
+  });
+
+  parametersTextbox.addEventListener('keyup', (e) => {
+    // Update visualizer on cursor movement keys
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) {
+      updateVisualizerFromCursor();
+    }
+  });
 
 // Helper to scroll to corresponding control in pane when editing document
 function scrollToPaneControl(blockContent) {
@@ -3031,8 +3144,11 @@ function scrollToPaneControl(blockContent) {
 
   let controlSection = null;
 
-  // Check if it's an oscillator header
+  // Check if it's a component header (oscillator, lfo, noise, etc.)
   const oscMatch = text.match(/^oscillator\s+(.+)$/i);
+  const lfoMatch = text.match(/^lfo\s+(.+)$/i);
+  const noiseMatch = text.match(/^noise\s+(.+)$/i);
+
   if (oscMatch) {
     // Find the oscillator section by data-oscillatorIndex
     const oscName = oscMatch[1].trim();
@@ -3040,14 +3156,24 @@ function scrollToPaneControl(blockContent) {
     if (oscIndex >= 0) {
       controlSection = document.querySelector(`[data-oscillatorIndex="${oscIndex}"]`);
     }
+  } else if (lfoMatch) {
+    // Find the LFO section by component name
+    const lfoName = lfoMatch[1].trim();
+    controlSection = document.querySelector(`[data-component-type="lfo"][data-component-name="${lfoName}"]`);
+  } else if (noiseMatch) {
+    // Find the noise section by component name
+    const noiseName = noiseMatch[1].trim();
+    controlSection = document.querySelector(`[data-component-type="noise"][data-component-name="${noiseName}"]`);
   } else if (text.startsWith('  ')) {
-    // It's an indented parameter - find its oscillator section
-    // Get the oscillator index by scanning backwards
+    // It's an indented parameter - find its parent component section
+    // Get the parent by scanning backwards
     const blocks = Array.from(parametersTextbox.querySelectorAll('.block'));
     const currentIndex = blocks.findIndex(b => b.querySelector('.block-content') === blockContent);
 
     for (let i = currentIndex - 1; i >= 0; i--) {
       const prevText = blocks[i].querySelector('.block-content')?.textContent.trim();
+
+      // Check for oscillator
       const prevOscMatch = prevText?.match(/^oscillator\s+(.+)$/i);
       if (prevOscMatch) {
         const oscName = prevOscMatch[1].trim();
@@ -3057,6 +3183,25 @@ function scrollToPaneControl(blockContent) {
         }
         break;
       }
+
+      // Check for LFO
+      const prevLfoMatch = prevText?.match(/^lfo\s+(.+)$/i);
+      if (prevLfoMatch) {
+        const lfoName = prevLfoMatch[1].trim();
+        controlSection = document.querySelector(`[data-component-type="lfo"][data-component-name="${lfoName}"]`);
+        break;
+      }
+
+      // Check for noise
+      const prevNoiseMatch = prevText?.match(/^noise\s+(.+)$/i);
+      if (prevNoiseMatch) {
+        const noiseName = prevNoiseMatch[1].trim();
+        controlSection = document.querySelector(`[data-component-type="noise"][data-component-name="${noiseName}"]`);
+        break;
+      }
+
+      // Stop if we hit a non-indented line
+      if (!prevText?.startsWith('  ')) break;
     }
   } else {
     // Global parameter - match by section ID or header text
@@ -3087,6 +3232,9 @@ function scrollToPaneControl(blockContent) {
 
 // Block-based input handling with event delegation
 parametersTextbox.addEventListener("input", () => {
+  // If we're already updating (e.g., from a slider change), skip to prevent circular updates
+  if (isUpdatingFromText) return;
+
   // Get the current block based on selection
   const block = getCurrentBlock();
   if (!block) return;
@@ -3220,11 +3368,14 @@ parametersTextbox.addEventListener("keydown", (e) => {
   // Insert after current block
   currentBlock.parentNode.insertBefore(newBlock, currentBlock.nextSibling);
 
-  // Focus new block BEFORE formatting to ensure cursor is at the beginning
-  focusBlock(newBlock);
-
-  // Format the new block (will preserve the cursor position we just set)
+  // Format the new block first
   formatBlock(newBlock);
+
+  // Then explicitly set cursor to beginning (position 0)
+  const newContentEl = newBlock.querySelector('.block-content');
+  if (newContentEl) {
+    setCursorPositionInBlock(newContentEl, 0);
+  }
 
   // Update UI panel to reflect new context
   updateUIForCurrentBlock();
@@ -3379,7 +3530,7 @@ function updateKeyboardHighlights() {
 }
 
 const activeKeys = new Set();
-const activeDefinedKeys = new Set(); // Track keys with definitions that are currently held
+const activeModifierKeys = new Set(); // Track modifier keys (keys with trigger definitions)
 
 // Keyboard to MIDI note mapping - chromatic layout starting from C3
 const keyToNote = {
@@ -3425,27 +3576,33 @@ document.addEventListener("keydown", (e) => {
       keyElement.classList.add('active');
     }
 
-    // If this key has a definition (like an LFO assignment), track it but don't play notes
+    // Check if this key has trigger definition (makes it a modifier key)
     const keyScope = `key_${key}`;
-    const keyPitch = instanceStore ? instanceStore.getTriggerAttribute(keyScope, 'pitch') : null;
-    if (keyPitch) {
-      activeDefinedKeys.add(key);
+    const hasActions = instanceStore ? instanceStore.collectActions(keyScope).length > 0 : false;
 
-      // Apply this key's LFO to all currently active notes
-      polyphonyManager.activeNotes.forEach(note => {
-        note.addKeyLFO(keyPitch);
-      });
-
+    if (hasActions) {
+      // This is a modifier key - track it but don't play notes
+      activeModifierKeys.add(key);
+      console.log(`[Key] Modifier key activated: ${key} (will affect other keys)`);
       return;
     }
 
+    // This is a note-playing key - get active modifier if any
+    const activeModifier = activeModifierKeys.size > 0
+      ? `key_${activeModifierKeys.values().next().value}`
+      : null;
+
+    console.log(`[Key] Playing note for '${key}'${activeModifier ? ` with modifier ${activeModifier}` : ''}`);
+
+    // Play the note - actions from activeModifier will be applied automatically
     const rootFrequency = 440 * Math.pow(2, (midiNote - 69) / 12);
     const frequencies = getChordFrequencies(rootFrequency, midiNote);
 
     frequencies.forEach((freq, index) => {
       const noteId = `keyboard-${key}-${index}`;
       const isSynthetic = index > 0; // First note (index 0) is root, rest are synthetic
-      polyphonyManager.startNote(freq, noteId, 100, isSynthetic, midiNote, key);
+      // Pass activeModifier as keyScope - NoteInstance will collect and execute actions from it
+      polyphonyManager.startNote(freq, noteId, 100, isSynthetic, midiNote, activeModifier);
     });
   }
 });
@@ -3461,7 +3618,6 @@ document.addEventListener("keyup", (e) => {
     e.preventDefault();
     e.stopPropagation();
     activeKeys.delete(key);
-    activeDefinedKeys.delete(key); // Remove from defined keys tracking
 
     // Remove highlight from the key
     const keyElement = document.querySelector(`.key-label[data-key="${key}"]`);
@@ -3469,16 +3625,18 @@ document.addEventListener("keyup", (e) => {
       keyElement.classList.remove('active');
     }
 
-    // If this key has a definition, remove its LFO from all active notes
+    // Check if this was a modifier key
     const keyScope = `key_${key}`;
-    const keyPitch = instanceStore ? instanceStore.getTriggerAttribute(keyScope, 'pitch') : null;
-    if (keyPitch) {
-      polyphonyManager.activeNotes.forEach(note => {
-        note.removeKeyLFO();
-      });
+    const hasActions = instanceStore ? instanceStore.collectActions(keyScope).length > 0 : false;
+
+    if (hasActions) {
+      // This was a modifier key - just remove it from tracking
+      activeModifierKeys.delete(key);
+      console.log(`[Key] Modifier key deactivated: ${key}`);
       return;
     }
 
+    // Stop the notes for regular keys
     const rootFrequency = 440 * Math.pow(2, (midiNote - 69) / 12);
     const frequencies = getChordFrequencies(rootFrequency, midiNote);
 
@@ -3502,13 +3660,11 @@ document.addEventListener("blur", (e) => {
       }
     });
     activeKeys.clear();
-    activeDefinedKeys.clear();
+    activeModifierKeys.clear();
   }
 }, true);
 
   // Track selection changes (for mouse selection, focus changes, etc.)
-  // DISABLED: This was causing constant UI regeneration which removed slider event listeners
-  // TODO: Implement focused UI that only shows current block's controls without regenerating everything
   // Update UI when cursor position changes (arrow keys, clicking, etc.)
   let selectionChangeTimeout = null;
   document.addEventListener('selectionchange', () => {
@@ -3516,6 +3672,26 @@ document.addEventListener("blur", (e) => {
       clearTimeout(selectionChangeTimeout);
     }
     selectionChangeTimeout = setTimeout(() => {
+      // Skip if we're in the middle of updating from UI controls (e.g., slider drag)
+      // This prevents UI regeneration while user is interacting with controls
+      if (isUpdatingFromText) {
+        return;
+      }
+
+      // Skip if a UI control was used very recently (within last 200ms)
+      // This prevents UI regeneration immediately after slider interactions
+      const timeSinceLastUIUpdate = Date.now() - lastUIUpdateTime;
+      if (timeSinceLastUIUpdate < 200) {
+        return;
+      }
+
+      // Skip if user is actively interacting with a slider/control
+      // to prevent UI regeneration from destroying the control they're using
+      const activeEl = document.activeElement;
+      if (activeEl && (activeEl.type === 'range' || activeEl.tagName === 'INPUT')) {
+        return;
+      }
+
       const selection = window.getSelection();
       if (selection.rangeCount > 0) {
         const range = selection.getRangeAt(0);
@@ -3524,7 +3700,7 @@ document.addEventListener("blur", (e) => {
           updateUIForCurrentBlock();
         }
       }
-    }, 50); // 50ms debounce for responsiveness
+    }, 150); // Longer debounce to avoid interference with slider interactions
   });
 
   // Register command modal event listeners
@@ -3782,6 +3958,62 @@ const commands = [
     }
   },
   {
+    name: "New Noise",
+    description: "Create a noise modulation source for organic drift",
+    action: () => {
+      // Get all existing names (oscillators, LFOs, envelopes, noise)
+      const existingNames = Array.from(parametersTextbox.querySelectorAll('.block-content'))
+        .map(block => {
+          const text = block.textContent.trim();
+          const oscMatch = text.match(/^oscillator\s+(.+)$/i);
+          const lfoMatch = text.match(/^lfo\s+(.+)$/i);
+          const envMatch = text.match(/^envelope\s+(.+)$/i);
+          const noiseMatch = text.match(/^noise\s+(.+)$/i);
+          if (oscMatch) return oscMatch[1];
+          if (lfoMatch) return lfoMatch[1];
+          if (envMatch) return envMatch[1];
+          if (noiseMatch) return noiseMatch[1];
+          return null;
+        })
+        .filter(name => name !== null);
+
+      // Get a random unused name
+      const noiseName = getRandomUnusedName(existingNames);
+
+      // Use the saved block from when slash was pressed
+      const targetBlock = slashBlock;
+
+      // Create the new noise blocks
+      const noiseHeaderBlock = createBlock(`noise ${noiseName}`);
+      const rateBlock = createBlock(`  rate 0.5`);
+      const depthBlock = createBlock(`  depth 2`);
+
+      // Insert the blocks
+      if (targetBlock) {
+        // Insert after the current block (in reverse order)
+        targetBlock.insertAdjacentElement('afterend', depthBlock);
+        targetBlock.insertAdjacentElement('afterend', rateBlock);
+        targetBlock.insertAdjacentElement('afterend', noiseHeaderBlock);
+      } else {
+        // Append to the end
+        parametersTextbox.appendChild(noiseHeaderBlock);
+        parametersTextbox.appendChild(rateBlock);
+        parametersTextbox.appendChild(depthBlock);
+      }
+
+      // Format and sync
+      formatBlock(noiseHeaderBlock);
+      formatBlock(rateBlock);
+      formatBlock(depthBlock);
+
+      syncUIFromText();
+
+      // Position cursor at the end of the noise name
+      const noiseContent = noiseHeaderBlock.querySelector('.block-content');
+      setCursorToEnd(noiseContent);
+    }
+  },
+  {
     name: "New Key",
     description: "Create a new key definition for dynamic modulation",
     action: () => {
@@ -3789,20 +4021,24 @@ const commands = [
 
       // Create the new key blocks
       const keyHeaderBlock = createBlock(`key f`);
-      const pitchBlock = createBlock(`  pitch vibrato`);
+      const pitchBlock = createBlock(`  pitch 0`);
+      const modulationBlock = createBlock(`    modulation vibrato`);
 
       // Insert the blocks
       if (targetBlock) {
+        targetBlock.insertAdjacentElement('afterend', modulationBlock);
         targetBlock.insertAdjacentElement('afterend', pitchBlock);
         targetBlock.insertAdjacentElement('afterend', keyHeaderBlock);
       } else {
         parametersTextbox.appendChild(keyHeaderBlock);
         parametersTextbox.appendChild(pitchBlock);
+        parametersTextbox.appendChild(modulationBlock);
       }
 
       // Format and sync
       formatBlock(keyHeaderBlock);
       formatBlock(pitchBlock);
+      formatBlock(modulationBlock);
       syncUIFromText();
 
       // Position cursor at the end of the key character
@@ -3980,7 +4216,7 @@ const commands = [
     }
   },
   {
-    name: "New Filter",
+    name: "New Lowpass Filter",
     description: "Create a low-pass filter section",
     action: () => {
       // Get all existing names (oscillators, LFOs, filters, envelopes, etc.)
@@ -3989,9 +4225,9 @@ const commands = [
           const text = block.textContent.trim();
           const oscMatch = text.match(/^oscillator\s+(\w+)/);
           const lfoMatch = text.match(/^lfo\s+(\w+)/);
-          const filterMatch = text.match(/^filter\s+(\w+)/);
+          const filterMatch = text.match(/^(lowpass|highpass|bandpass|notch)\s+(\w+)/);
           const envMatch = text.match(/^envelope\s+(\w+)/);
-          return oscMatch ? oscMatch[1] : (lfoMatch ? lfoMatch[1] : (filterMatch ? filterMatch[1] : (envMatch ? envMatch[1] : null)));
+          return oscMatch ? oscMatch[1] : (lfoMatch ? lfoMatch[1] : (filterMatch ? filterMatch[2] : (envMatch ? envMatch[1] : null)));
         })
         .filter(name => name !== null);
 
@@ -4000,8 +4236,8 @@ const commands = [
 
       const targetBlock = slashBlock;
 
-      // Create the new filter blocks
-      const filterHeaderBlock = createBlock(`filter ${filterName}`);
+      // Create the new lowpass filter blocks
+      const filterHeaderBlock = createBlock(`lowpass ${filterName}`);
       const frequencyBlock = createBlock(`  frequency 2000`);
       const resonanceBlock = createBlock(`  resonance 1`);
 
@@ -4028,36 +4264,147 @@ const commands = [
     }
   },
   {
-    name: "New Global",
-    description: "Create a global settings section (chord and detune)",
+    name: "New Highpass Filter",
+    description: "Create a high-pass filter section",
     action: () => {
+      // Get all existing names (oscillators, LFOs, filters, envelopes, etc.)
+      const existingNames = Array.from(parametersTextbox.querySelectorAll('.block-content'))
+        .map(block => {
+          const text = block.textContent.trim();
+          const oscMatch = text.match(/^oscillator\s+(\w+)/);
+          const lfoMatch = text.match(/^lfo\s+(\w+)/);
+          const filterMatch = text.match(/^(lowpass|highpass|bandpass|notch)\s+(\w+)/);
+          const envMatch = text.match(/^envelope\s+(\w+)/);
+          return oscMatch ? oscMatch[1] : (lfoMatch ? lfoMatch[1] : (filterMatch ? filterMatch[2] : (envMatch ? envMatch[1] : null)));
+        })
+        .filter(name => name !== null);
+
+      // Get a random unused name
+      const filterName = getRandomUnusedName(existingNames);
+
       const targetBlock = slashBlock;
 
-      // Create the new global blocks
-      const globalHeaderBlock = createBlock(`global`);
-      const chordBlock = createBlock(`  chord none`);
-      const detuneBlock = createBlock(`  detune 0`);
+      // Create the new highpass filter blocks
+      const filterHeaderBlock = createBlock(`highpass ${filterName}`);
+      const frequencyBlock = createBlock(`  frequency 2000`);
+      const resonanceBlock = createBlock(`  resonance 1`);
 
       // Insert the blocks
       if (targetBlock) {
-        targetBlock.insertAdjacentElement('afterend', detuneBlock);
-        targetBlock.insertAdjacentElement('afterend', chordBlock);
-        targetBlock.insertAdjacentElement('afterend', globalHeaderBlock);
+        targetBlock.insertAdjacentElement('afterend', resonanceBlock);
+        targetBlock.insertAdjacentElement('afterend', frequencyBlock);
+        targetBlock.insertAdjacentElement('afterend', filterHeaderBlock);
       } else {
-        parametersTextbox.appendChild(globalHeaderBlock);
-        parametersTextbox.appendChild(chordBlock);
-        parametersTextbox.appendChild(detuneBlock);
+        parametersTextbox.appendChild(filterHeaderBlock);
+        parametersTextbox.appendChild(frequencyBlock);
+        parametersTextbox.appendChild(resonanceBlock);
       }
 
       // Format and sync
-      formatBlock(globalHeaderBlock);
-      formatBlock(chordBlock);
-      formatBlock(detuneBlock);
+      formatBlock(filterHeaderBlock);
+      formatBlock(frequencyBlock);
+      formatBlock(resonanceBlock);
       syncUIFromText();
 
-      // Position cursor at the global header
-      const globalContent = globalHeaderBlock.querySelector('.block-content');
-      setCursorToEnd(globalContent);
+      // Position cursor at the filter header
+      const filterContent = filterHeaderBlock.querySelector('.block-content');
+      setCursorToEnd(filterContent);
+    }
+  },
+  {
+    name: "New Bandpass Filter",
+    description: "Create a band-pass filter section",
+    action: () => {
+      // Get all existing names (oscillators, LFOs, filters, envelopes, etc.)
+      const existingNames = Array.from(parametersTextbox.querySelectorAll('.block-content'))
+        .map(block => {
+          const text = block.textContent.trim();
+          const oscMatch = text.match(/^oscillator\s+(\w+)/);
+          const lfoMatch = text.match(/^lfo\s+(\w+)/);
+          const filterMatch = text.match(/^(lowpass|highpass|bandpass|notch)\s+(\w+)/);
+          const envMatch = text.match(/^envelope\s+(\w+)/);
+          return oscMatch ? oscMatch[1] : (lfoMatch ? lfoMatch[1] : (filterMatch ? filterMatch[2] : (envMatch ? envMatch[1] : null)));
+        })
+        .filter(name => name !== null);
+
+      // Get a random unused name
+      const filterName = getRandomUnusedName(existingNames);
+
+      const targetBlock = slashBlock;
+
+      // Create the new bandpass filter blocks
+      const filterHeaderBlock = createBlock(`bandpass ${filterName}`);
+      const frequencyBlock = createBlock(`  frequency 2000`);
+      const resonanceBlock = createBlock(`  resonance 1`);
+
+      // Insert the blocks
+      if (targetBlock) {
+        targetBlock.insertAdjacentElement('afterend', resonanceBlock);
+        targetBlock.insertAdjacentElement('afterend', frequencyBlock);
+        targetBlock.insertAdjacentElement('afterend', filterHeaderBlock);
+      } else {
+        parametersTextbox.appendChild(filterHeaderBlock);
+        parametersTextbox.appendChild(frequencyBlock);
+        parametersTextbox.appendChild(resonanceBlock);
+      }
+
+      // Format and sync
+      formatBlock(filterHeaderBlock);
+      formatBlock(frequencyBlock);
+      formatBlock(resonanceBlock);
+      syncUIFromText();
+
+      // Position cursor at the filter header
+      const filterContent = filterHeaderBlock.querySelector('.block-content');
+      setCursorToEnd(filterContent);
+    }
+  },
+  {
+    name: "New Notch Filter",
+    description: "Create a notch filter section",
+    action: () => {
+      // Get all existing names (oscillators, LFOs, filters, envelopes, etc.)
+      const existingNames = Array.from(parametersTextbox.querySelectorAll('.block-content'))
+        .map(block => {
+          const text = block.textContent.trim();
+          const oscMatch = text.match(/^oscillator\s+(\w+)/);
+          const lfoMatch = text.match(/^lfo\s+(\w+)/);
+          const filterMatch = text.match(/^(lowpass|highpass|bandpass|notch)\s+(\w+)/);
+          const envMatch = text.match(/^envelope\s+(\w+)/);
+          return oscMatch ? oscMatch[1] : (lfoMatch ? lfoMatch[1] : (filterMatch ? filterMatch[2] : (envMatch ? envMatch[1] : null)));
+        })
+        .filter(name => name !== null);
+
+      // Get a random unused name
+      const filterName = getRandomUnusedName(existingNames);
+
+      const targetBlock = slashBlock;
+
+      // Create the new notch filter blocks
+      const filterHeaderBlock = createBlock(`notch ${filterName}`);
+      const frequencyBlock = createBlock(`  frequency 2000`);
+      const resonanceBlock = createBlock(`  resonance 1`);
+
+      // Insert the blocks
+      if (targetBlock) {
+        targetBlock.insertAdjacentElement('afterend', resonanceBlock);
+        targetBlock.insertAdjacentElement('afterend', frequencyBlock);
+        targetBlock.insertAdjacentElement('afterend', filterHeaderBlock);
+      } else {
+        parametersTextbox.appendChild(filterHeaderBlock);
+        parametersTextbox.appendChild(frequencyBlock);
+        parametersTextbox.appendChild(resonanceBlock);
+      }
+
+      // Format and sync
+      formatBlock(filterHeaderBlock);
+      formatBlock(frequencyBlock);
+      formatBlock(resonanceBlock);
+      syncUIFromText();
+
+      // Position cursor at the filter header
+      const filterContent = filterHeaderBlock.querySelector('.block-content');
+      setCursorToEnd(filterContent);
     }
   },
   {

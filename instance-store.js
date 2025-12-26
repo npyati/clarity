@@ -52,6 +52,100 @@ class InstanceStore {
     this.nameRegistry = {};
   }
 
+  // ============================================================================
+  // ACTION-BASED MODULATION SYSTEM
+  // ============================================================================
+
+  /**
+   * Collect actions from a trigger scope
+   * Returns an array of actions to be applied to a target (e.g., a note)
+   *
+   * Actions bubble up from nested layers:
+   * - Top level: set attribute values (pitch, volume)
+   * - Nested level: apply modulations (LFO, envelope)
+   *
+   * Example:
+   * Key f
+   *   pitch 0
+   *     modulation vibrato
+   *
+   * Produces actions:
+   * [
+   *   { type: 'set_pitch', value: 0, unit: 'cents' },
+   *   { type: 'apply_modulation', target: 'pitch', modulator: { type: 'component_ref', value: 'vibrato' } }
+   * ]
+   *
+   * @param {string} scopeKey - Trigger scope key (e.g., 'key_f', 'note_c4')
+   * @returns {Array} Array of actions
+   */
+  collectActions(scopeKey) {
+    const actions = [];
+    const trigger = this.components.triggers[scopeKey];
+
+    if (!trigger || !trigger.attributes) {
+      console.log(`[collectActions] No trigger or attributes for ${scopeKey}`);
+      return actions;
+    }
+
+    console.log(`[collectActions] Collecting actions for ${scopeKey}, attributes:`, trigger.attributes);
+
+    // Iterate through all trigger attributes
+    for (const [attrName, attrData] of Object.entries(trigger.attributes)) {
+      console.log(`[collectActions] Processing ${attrName}:`, attrData);
+      const normalized = this._normalizeAttribute(attrData);
+      console.log(`[collectActions] Normalized ${attrName}:`, normalized);
+
+      // Handle pitch attribute
+      if (attrName === 'pitch') {
+        if (normalized.value !== null && normalized.value !== undefined) {
+          actions.push({
+            type: 'set_pitch',
+            value: normalized.value,
+            unit: 'cents'
+          });
+          console.log(`[collectActions] Added set_pitch action: ${normalized.value}`);
+        }
+
+        // Add modulation action if present
+        if (normalized.modulation) {
+          actions.push({
+            type: 'apply_modulation',
+            target: 'pitch',
+            modulator: normalized.modulation
+          });
+          console.log(`[collectActions] Added pitch modulation action:`, normalized.modulation);
+        }
+      }
+
+      // Handle volume attribute
+      else if (attrName === 'volume') {
+        if (normalized.value !== null && normalized.value !== undefined) {
+          actions.push({
+            type: 'set_volume',
+            value: normalized.value,
+            unit: 'percentage'
+          });
+          console.log(`[collectActions] Added set_volume action: ${normalized.value}`);
+        }
+
+        // Add modulation action if present
+        if (normalized.modulation) {
+          actions.push({
+            type: 'apply_modulation',
+            target: 'volume',
+            modulator: normalized.modulation
+          });
+          console.log(`[collectActions] Added volume modulation action:`, normalized.modulation);
+        }
+      }
+
+      // Future: Add support for other attributes as needed
+    }
+
+    console.log(`[collectActions] Total actions collected: ${actions.length}`, actions);
+    return actions;
+  }
+
   /**
    * Get the plural form of a component type for storage
    */
@@ -60,7 +154,10 @@ class InstanceStore {
       oscillator: 'oscillators',
       lfo: 'lfos',
       envelope: 'envelopes',
-      filter: 'filters',
+      lowpass: 'filters',
+      highpass: 'filters',
+      bandpass: 'filters',
+      notch: 'filters',
       compressor: 'compressors'
     };
     return plurals[componentType] || componentType + 's';
@@ -222,6 +319,26 @@ class InstanceStore {
   }
 
   /**
+   * Normalize an attribute value to support modulation
+   * Converts both old format (plain value/ref) and new format ({ value, modulation })
+   * @param {any} attrValue - Attribute value in any format
+   * @returns {object} Normalized { value, modulation } object
+   */
+  _normalizeAttribute(attrValue) {
+    // Already in new format with modulation support
+    if (attrValue && typeof attrValue === 'object' &&
+        (attrValue.hasOwnProperty('value') || attrValue.hasOwnProperty('modulation'))) {
+      return {
+        value: attrValue.value !== undefined ? attrValue.value : null,
+        modulation: attrValue.modulation || null
+      };
+    }
+
+    // Old format (plain value, variable_ref, component_ref, expression)
+    return { value: attrValue, modulation: null };
+  }
+
+  /**
    * Update a component attribute
    * @param {string} name - Component name
    * @param {string} attributeName - Attribute to update
@@ -232,8 +349,50 @@ class InstanceStore {
     const component = this.getComponent(name);
     if (!component) return false;
 
-    component.attributes[attributeName] = value;
+    // Get existing attribute (might have modulation)
+    const existing = this._normalizeAttribute(component.attributes[attributeName]);
+
+    // Update value, preserve modulation
+    component.attributes[attributeName] = {
+      value,
+      modulation: existing.modulation
+    };
     return true;
+  }
+
+  /**
+   * Update a component attribute's modulation source
+   * @param {string} name - Component name
+   * @param {string} attributeName - Attribute to update
+   * @param {object|string} modulationRef - Modulation reference (component_ref object or name string)
+   * @returns {boolean} Success
+   */
+  updateComponentAttributeModulation(name, attributeName, modulationRef) {
+    const component = this.getComponent(name);
+    if (!component) return false;
+
+    // Ensure attribute exists in new format
+    const existing = this._normalizeAttribute(component.attributes[attributeName]);
+
+    // Update modulation, preserve value
+    component.attributes[attributeName] = {
+      value: existing.value,
+      modulation: modulationRef
+    };
+    return true;
+  }
+
+  /**
+   * Get a component attribute with modulation support
+   * @param {string} name - Component name
+   * @param {string} attributeName - Attribute name
+   * @returns {object} Normalized { value, modulation } object
+   */
+  getComponentAttribute(name, attributeName) {
+    const component = this.getComponent(name);
+    if (!component) return { value: null, modulation: null };
+
+    return this._normalizeAttribute(component.attributes[attributeName]);
   }
 
   /**
@@ -391,17 +550,75 @@ class InstanceStore {
       };
     }
 
-    this.components.triggers[scopeKey].attributes[attributeName] = value;
+    // Get existing attribute (might have modulation)
+    const existing = this._normalizeAttribute(this.components.triggers[scopeKey].attributes[attributeName]);
+
+    // Update value, preserve modulation
+    this.components.triggers[scopeKey].attributes[attributeName] = {
+      value,
+      modulation: existing.modulation
+    };
+  }
+
+  /**
+   * Set trigger attribute modulation
+   * @param {string} scopeKey - Trigger scope key
+   * @param {string} attributeName - Attribute name
+   * @param {object|string} modulationRef - Modulation reference
+   */
+  setTriggerAttributeModulation(scopeKey, attributeName, modulationRef) {
+    if (!this.components.triggers[scopeKey]) {
+      this.components.triggers[scopeKey] = {
+        type: scopeKey === 'master' ? 'master' :
+              scopeKey.startsWith('note_') ? 'note' : 'key',
+        components: {
+          oscillators: {},
+          lfos: {},
+          envelopes: {},
+          filters: {},
+          compressors: {}
+        },
+        attributes: {},
+        variableOverrides: {}
+      };
+    }
+
+    // Get existing attribute (might have value)
+    const existing = this._normalizeAttribute(this.components.triggers[scopeKey].attributes[attributeName]);
+
+    // Update modulation, preserve value
+    this.components.triggers[scopeKey].attributes[attributeName] = {
+      value: existing.value,
+      modulation: modulationRef
+    };
   }
 
   /**
    * Get trigger attribute
    * @param {string} scopeKey - Trigger scope key
    * @param {string} attributeName - Attribute name
-   * @returns {any|null} Attribute value or null
+   * @returns {any|null} Attribute value or null (backwards compatible - returns value only)
    */
   getTriggerAttribute(scopeKey, attributeName) {
-    return this.components.triggers[scopeKey]?.attributes[attributeName] || null;
+    const attr = this.components.triggers[scopeKey]?.attributes[attributeName];
+    if (!attr) return null;
+
+    // For backwards compatibility, return just the value
+    const normalized = this._normalizeAttribute(attr);
+    return normalized.value;
+  }
+
+  /**
+   * Get trigger attribute with modulation support
+   * @param {string} scopeKey - Trigger scope key
+   * @param {string} attributeName - Attribute name
+   * @returns {object} Normalized { value, modulation } object
+   */
+  getTriggerAttributeWithModulation(scopeKey, attributeName) {
+    const attr = this.components.triggers[scopeKey]?.attributes[attributeName];
+    if (!attr) return { value: null, modulation: null };
+
+    return this._normalizeAttribute(attr);
   }
 
   /**

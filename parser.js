@@ -188,6 +188,10 @@ class ParseContext {
     // { type, key }
     this.currentTrigger = null;
 
+    // Current attribute being defined (for modulation)
+    // { name, indent }
+    this.currentAttribute = null;
+
     // Line number for error reporting
     this.lineNumber = 0;
 
@@ -281,6 +285,21 @@ class Parser {
       this.context.popScopesToIndent(indent);
       this.context.currentComponent = null;
       this.context.currentTrigger = null;
+      this.context.currentAttribute = null;
+    }
+
+    // Clear currentAttribute if indent is not deeper than attribute indent
+    if (this.context.currentAttribute && indent <= this.context.currentAttribute.indent) {
+      this.context.currentAttribute = null;
+    }
+
+    // Special case: if we're at indent 0 and parsing a component/variable/trigger,
+    // ensure we're back at global scope (not in a trigger scope)
+    if (indent === 0 && (this._isComponent(content) || this._isVariable(content) || this._isTrigger(content))) {
+      this.context.popScopesToIndent(0);
+      this.context.currentComponent = null;
+      this.context.currentTrigger = null;
+      this.context.currentAttribute = null;
     }
 
     // Determine line type and parse
@@ -288,6 +307,12 @@ class Parser {
       this._parseVariable(content, indent);
     } else if (this._isTrigger(content)) {
       this._parseTrigger(content, indent);
+    } else if (this._isModulation(content)) {
+      // Modulation line - must be nested under an attribute
+      this._parseModulation(content, indent);
+    } else if (indent > 0 && (this.context.currentComponent || this.context.currentTrigger)) {
+      // Indented line inside a component or trigger scope - must be an attribute
+      this._parseAttribute(content, indent);
     } else if (this._isComponent(content)) {
       this._parseComponent(content, indent);
     } else {
@@ -336,6 +361,13 @@ class Parser {
     const componentTypes = this.schemas.SchemaUtils.getAllComponentTypes();
     const firstWord = content.split(' ')[0];
     return componentTypes.includes(firstWord);
+  }
+
+  /**
+   * Check if line is a modulation declaration
+   */
+  _isModulation(content) {
+    return content.startsWith('modulation ');
   }
 
   /**
@@ -507,10 +539,10 @@ class Parser {
     // Determine context - are we in a component or trigger?
     if (this.context.currentComponent) {
       // Component attribute
-      this._parseComponentAttribute(attributeName, valueStr);
+      this._parseComponentAttribute(attributeName, valueStr, indent);
     } else if (this.context.currentTrigger) {
       // Trigger attribute
-      this._parseTriggerAttribute(attributeName, valueStr);
+      this._parseTriggerAttribute(attributeName, valueStr, indent);
     } else {
       this.context.addError(`Attribute "${attributeName}" must be inside a component or trigger`);
     }
@@ -519,7 +551,7 @@ class Parser {
   /**
    * Parse component attribute
    */
-  _parseComponentAttribute(attributeName, valueStr) {
+  _parseComponentAttribute(attributeName, valueStr, indent) {
     const { type, name } = this.context.currentComponent;
 
     // Get attribute schema
@@ -532,14 +564,36 @@ class Parser {
     // Resolve value (could be literal, variable ref, or component ref)
     const value = this._resolveAttributeValue(valueStr, type, attributeName, attrSchema);
 
-    // Update component attribute
-    this.store.updateComponentAttribute(name, attributeName, value);
+    // BACKWARDS COMPATIBILITY: Check if value is a component_ref and attribute accepts modulation
+    // Old syntax: "pitch vibrato" -> New syntax: "pitch 0" + nested "modulation vibrato"
+    if (value && typeof value === 'object' && value.type === 'component_ref' &&
+        attrSchema && attrSchema.acceptsModulation && !attrSchema.acceptsComponents) {
+
+      this.context.addWarning(
+        `Deprecated syntax: "${attributeName} ${valueStr}". ` +
+        `Use "${attributeName} ${attrSchema.default}" with nested "modulation ${valueStr}" instead.`
+      );
+
+      // Set attribute to default value
+      this.store.updateComponentAttribute(name, attributeName, attrSchema.default);
+
+      // Set modulation
+      this.store.updateComponentAttributeModulation(name, attributeName, value);
+
+      console.log(`✓ Auto-converted old syntax: ${attributeName} ${valueStr} -> ${attributeName} ${attrSchema.default} + modulation ${valueStr}`);
+    } else {
+      // Normal case - just update the attribute
+      this.store.updateComponentAttribute(name, attributeName, value);
+    }
+
+    // Set as current attribute for potential modulation
+    this.context.currentAttribute = { name: attributeName, indent, isComponent: true };
   }
 
   /**
    * Parse trigger attribute (for triggers like master that can have attributes)
    */
-  _parseTriggerAttribute(attributeName, valueStr) {
+  _parseTriggerAttribute(attributeName, valueStr, indent) {
     const { type, key } = this.context.currentTrigger;
 
     // Get trigger schema
@@ -558,8 +612,76 @@ class Parser {
     // Resolve value
     const value = this._resolveAttributeValue(valueStr, type, attributeName, attrSchema);
 
-    // Set trigger attribute
-    this.store.setTriggerAttribute(key, attributeName, value);
+    // BACKWARDS COMPATIBILITY: Check if value is a component_ref and attribute accepts modulation
+    // Old syntax: "volume tremolo" -> New syntax: "volume 80" + nested "modulation tremolo"
+    if (value && typeof value === 'object' && value.type === 'component_ref' &&
+        attrSchema && attrSchema.acceptsModulation && !attrSchema.acceptsComponents) {
+
+      this.context.addWarning(
+        `Deprecated syntax: "${attributeName} ${valueStr}". ` +
+        `Use "${attributeName} ${attrSchema.default}" with nested "modulation ${valueStr}" instead.`
+      );
+
+      // Set attribute to default value
+      this.store.setTriggerAttribute(key, attributeName, attrSchema.default);
+
+      // Set modulation
+      this.store.setTriggerAttributeModulation(key, attributeName, value);
+
+      console.log(`✓ Auto-converted old syntax: ${attributeName} ${valueStr} -> ${attributeName} ${attrSchema.default} + modulation ${valueStr}`);
+    } else {
+      // Normal case - set trigger attribute
+      this.store.setTriggerAttribute(key, attributeName, value);
+    }
+
+    // Set as current attribute for potential modulation
+    this.context.currentAttribute = { name: attributeName, indent, isComponent: false, triggerKey: key };
+  }
+
+  /**
+   * Parse modulation line
+   * Format: modulation [lfoname|envelopename]
+   */
+  _parseModulation(content, indent) {
+    // Extract modulator name
+    const parts = content.split(' ');
+    if (parts.length < 2) {
+      this.context.addError('Modulation requires a modulator name (e.g., "modulation vibrato")');
+      return;
+    }
+
+    const modulatorName = parts.slice(1).join(' ').trim();
+
+    // Check if we have a current attribute
+    if (!this.context.currentAttribute) {
+      this.context.addError('Modulation must be nested under an attribute');
+      return;
+    }
+
+    // Create modulation reference (validation will happen in Pass 2)
+    const modulationRef = {
+      type: 'component_ref',
+      value: modulatorName,
+      componentType: null  // Will be resolved in Pass 2
+    };
+
+    // Update the attribute's modulation
+    const attrName = this.context.currentAttribute.name;
+    if (this.context.currentAttribute.isComponent && this.context.currentComponent) {
+      this.store.updateComponentAttributeModulation(
+        this.context.currentComponent.name,
+        attrName,
+        modulationRef
+      );
+    } else if (!this.context.currentAttribute.isComponent && this.context.currentTrigger) {
+      this.store.setTriggerAttributeModulation(
+        this.context.currentAttribute.triggerKey,
+        attrName,
+        modulationRef
+      );
+    }
+
+    // console.log(`✓ Modulation added: ${attrName} <- ${modulatorName} (will be validated in Pass 2)`);
   }
 
   /**
@@ -577,7 +699,7 @@ class Parser {
     // Check if it's a component reference
     if (attrSchema.type === this.schemas.AttributeType.COMPONENT_REF || attrSchema.acceptsModulation) {
       const componentInfo = this.store.getNameInfo(valueStr);
-      console.log(`Checking component ref for "${attributeName}" = "${valueStr}":`, componentInfo);
+      // console.log(`Checking component ref for "${attributeName}" = "${valueStr}":`, componentInfo);
       if (componentInfo && componentInfo.type !== 'variable') {
         // It's a component reference - validate type
         if (attrSchema.acceptsComponents) {
@@ -643,7 +765,7 @@ class Parser {
    * PASS 2: Resolve all attribute references after all components are known
    */
   _resolveAllReferences() {
-    console.log('Pass 2: Resolving attribute references...');
+    // console.log('Pass 2: Resolving attribute references...');
 
     // Resolve references in global components
     this._resolveComponentReferences(this.store.components.global);
@@ -655,7 +777,10 @@ class Parser {
       }
     }
 
-    console.log('Pass 2 complete');
+    // Resolve references in trigger attributes (e.g., master's filter reference)
+    this._resolveTriggerAttributeReferences();
+
+    // console.log('Pass 2 complete');
   }
 
   /**
@@ -679,6 +804,28 @@ class Parser {
     for (const [attrName, attrValue] of Object.entries(component.attributes)) {
       const attrSchema = schema.attributes[attrName];
       if (!attrSchema) continue;
+
+      // Handle new { value, modulation } structure
+      if (attrValue && typeof attrValue === 'object' && attrValue.hasOwnProperty('modulation')) {
+        // Validate modulation reference if present
+        if (attrValue.modulation && attrValue.modulation.type === 'component_ref') {
+          const modulatorName = attrValue.modulation.value;
+          const modulatorInfo = this.store.getNameInfo(modulatorName);
+
+          if (!modulatorInfo || modulatorInfo.type === 'variable') {
+            this.context.addError(`Modulator "${modulatorName}" not found or is not a component`);
+          } else if (modulatorInfo.type !== 'lfo' && modulatorInfo.type !== 'envelope' && modulatorInfo.type !== 'noise') {
+            this.context.addError(`Component "${modulatorName}" is type "${modulatorInfo.type}", but only "lfo", "envelope", and "noise" can be used as modulators`);
+          } else if (attrSchema.acceptsModulation && !attrSchema.acceptsModulation.includes(modulatorInfo.type)) {
+            this.context.addError(`Attribute "${attrName}" cannot accept modulation from "${modulatorInfo.type}"`);
+          } else {
+            // Valid modulation - update componentType
+            attrValue.modulation.componentType = modulatorInfo.type;
+            // console.log(`✓ Resolved modulation: ${component.type} ${component.name}.${attrName} <- ${modulatorName} (${modulatorInfo.type})`);
+          }
+        }
+        continue;
+      }
 
       // Check if this attribute should be a component reference but is still a string
       if (typeof attrValue === 'string' &&
@@ -711,6 +858,82 @@ class Parser {
         }
       }
     }
+  }
+
+  /**
+   * Resolve attribute references in all triggers (e.g., master's filter/compressor references)
+   */
+  _resolveTriggerAttributeReferences() {
+    // console.log('Resolving trigger attribute references...');
+
+    for (const [triggerKey, trigger] of Object.entries(this.store.components.triggers)) {
+      if (!trigger.attributes) {
+        console.log(`  Trigger "${triggerKey}" has no attributes`);
+        continue;
+      }
+
+      // Get trigger type
+      const triggerType = trigger.type;
+      // console.log(`  Processing trigger "${triggerKey}" (type: ${triggerType})`);
+
+      const triggerSchema = this.schemas.SchemaUtils.getTriggerSchema(triggerType);
+      if (!triggerSchema) {
+        console.warn(`  No schema found for trigger type "${triggerType}"`);
+        continue;
+      }
+
+      if (!triggerSchema.attributes) {
+        console.log(`  Trigger type "${triggerType}" has no attributes in schema`);
+        continue;
+      }
+
+      // Resolve each attribute that might be a component reference
+      for (const [attrName, attrValue] of Object.entries(trigger.attributes)) {
+        // console.log(`    Checking attribute "${attrName}" = ${JSON.stringify(attrValue)}`);
+
+        const attrSchema = triggerSchema.attributes[attrName];
+        if (!attrSchema) {
+          console.warn(`    No schema for attribute "${attrName}"`);
+          continue;
+        }
+
+        // Check if this attribute should be a component reference but is still a string
+        if (typeof attrValue === 'string' && attrSchema.type === this.schemas.AttributeType.COMPONENT_REF) {
+          // Try to resolve as component reference
+          const componentInfo = this.store.getNameInfo(attrValue);
+          console.log(`    Attempting to resolve "${attrName}" = "${attrValue}":`, componentInfo);
+
+          if (componentInfo && componentInfo.type !== 'variable') {
+            // Validate type
+            let isValid = false;
+            if (attrSchema.acceptsComponents && attrSchema.acceptsComponents.includes(componentInfo.type)) {
+              isValid = true;
+            }
+
+            if (isValid) {
+              // Convert to component reference
+              trigger.attributes[attrName] = {
+                type: 'component_ref',
+                value: attrValue,
+                componentType: componentInfo.type
+              };
+              console.log(`    ✓ Resolved: ${triggerKey}.${attrName} -> ${attrValue} (${componentInfo.type})`);
+            } else {
+              console.warn(`    ✗ Component type "${componentInfo.type}" not accepted for trigger attribute "${attrName}"`);
+              console.warn(`      Accepts:`, attrSchema.acceptsComponents);
+            }
+          } else {
+            console.warn(`    ✗ Component "${attrValue}" not found or is a variable`);
+          }
+        } else if (typeof attrValue === 'object' && attrValue.type === 'component_ref') {
+          console.log(`    Already resolved as component_ref`);
+        } else {
+          // console.log(`    Not a string or not COMPONENT_REF type (is ${typeof attrValue})`);
+        }
+      }
+    }
+
+    // console.log('Trigger attribute resolution complete');
   }
 }
 

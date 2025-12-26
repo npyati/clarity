@@ -448,6 +448,7 @@ class UIGenerator {
     const section = document.createElement('div');
     section.className = 'controls-section';
     section.dataset.componentName = component.name;
+    section.dataset.componentType = component.type;
 
     const header = document.createElement('h2');
     header.textContent = `${component.type} ${component.name}`;
@@ -496,21 +497,29 @@ class UIGenerator {
     header.textContent = scopeKey;
     section.appendChild(header);
 
+    // Get trigger schema
+    const triggerSchema = this.schemas.SchemaUtils.getTriggerSchema(triggerType);
+
     // Show trigger attributes if any
     for (const [attrName, attrValue] of Object.entries(trigger.attributes || {})) {
-      // Create control (simplified for now)
-      const container = document.createElement('div');
-      container.className = 'slider-container';
+      const attrSchema = triggerSchema?.attributes[attrName];
+      if (!attrSchema) continue;
 
-      const label = document.createElement('label');
-      label.textContent = attrName;
+      const control = this._createAttributeControl(
+        attrName,
+        attrValue,
+        attrSchema,
+        scopeKey,
+        null,
+        (value) => {
+          this.store.setTriggerAttribute(scopeKey, attrName, value);
+          this._updateTextFromUI(triggerType, scopeKey.replace(`${triggerType}_`, ''), attrName, value);
+        }
+      );
 
-      const value = document.createElement('span');
-      value.textContent = JSON.stringify(attrValue);
-
-      container.appendChild(label);
-      container.appendChild(value);
-      section.appendChild(container);
+      if (control) {
+        section.appendChild(control);
+      }
     }
 
     // Show components in this trigger
@@ -539,14 +548,18 @@ class UIGenerator {
     // Resolve current value
     let currentValue = this._resolveDisplayValue(attrValue, attrSchema);
 
-    // Check if this attribute uses a variable
-    const usesVariable = attrValue && typeof attrValue === 'object' && attrValue.type === 'variable_ref';
+    // Check if this attribute uses a variable (handle both old and new structure)
+    let actualValue = attrValue;
+    if (attrValue && typeof attrValue === 'object' && attrValue.hasOwnProperty('value')) {
+      actualValue = attrValue.value;
+    }
+    const usesVariable = actualValue && typeof actualValue === 'object' && actualValue.type === 'variable_ref';
 
     // Debug logging
-    console.log('Creating control for', attrName, '- attrValue:', attrValue, 'usesVariable:', usesVariable, 'currentValue:', currentValue);
+    // console.log('Creating control for', attrName, '- attrValue:', attrValue, 'usesVariable:', usesVariable, 'currentValue:', currentValue);
 
     if (usesVariable) {
-      label.textContent += ` (${attrValue.value})`;
+      label.textContent += ` (${actualValue.value})`;
     }
 
     // Create appropriate control based on attribute type
@@ -615,9 +628,9 @@ class UIGenerator {
       valueDisplay.className = 'slider-value';
 
       // Check if this attribute uses an expression or variable
-      const usesExpression = attrValue && typeof attrValue === 'object' && attrValue.type === 'expression';
+      const usesExpression = actualValue && typeof actualValue === 'object' && actualValue.type === 'expression';
       if (usesExpression) {
-        valueDisplay.textContent = `${currentValue} (${attrValue.value})`;
+        valueDisplay.textContent = `${currentValue} (${actualValue.value})`;
       } else if (usesVariable) {
         valueDisplay.textContent = currentValue;
       } else {
@@ -668,6 +681,14 @@ class UIGenerator {
   _resolveDisplayValue(attrValue, attrSchema) {
     if (attrValue === null || attrValue === undefined) {
       return attrSchema.default;
+    }
+
+    // Handle new { value, modulation } structure - extract the value
+    if (typeof attrValue === 'object' &&
+        (attrValue.hasOwnProperty('value') || attrValue.hasOwnProperty('modulation')) &&
+        !attrValue.type) {
+      // Recursively resolve the value part
+      return this._resolveDisplayValue(attrValue.value, attrSchema);
     }
 
     if (typeof attrValue === 'object' && attrValue.type === 'variable_ref') {
