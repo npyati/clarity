@@ -61,6 +61,26 @@ describe('Parser element types', () => {
     expect(pitch.modulation).toMatchObject({ type: 'component_ref', value: 'wobble' });
   });
 
+  it('parses components nested inside trigger scopes', () => {
+    const result = parse([
+      'oscillator lead',
+      '  wave sawtooth',
+      '',
+      'note c4',
+      '  lowpass damp',
+      '    frequency 300',
+      '    resonance 1',
+      '  chord major',
+    ]);
+    expect(result.success).toBe(true);
+    const scoped = store.getTriggerScopedComponents('note_c4');
+    expect(Object.keys(scoped.filters || {})).toEqual(['damp']);
+    // The dedented 'chord major' attaches to the trigger, not the filter
+    expect(store.getTriggerAttribute('note_c4', 'chord')).toBe('major');
+    const damp = store.getComponent('damp');
+    expect(damp.attributes.frequency).toBeDefined();
+  });
+
   it('supports forward references', () => {
     const result = parse([
       'oscillator lead',

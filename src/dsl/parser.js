@@ -181,6 +181,14 @@ class Parser {
       this.context.currentAttribute = null;
     }
 
+    // Leaving a component's attribute block (dedent to or above the
+    // component's own indent) ends that component
+    if (this.context.currentComponent &&
+        this.context.currentComponent.indent !== undefined &&
+        indent <= this.context.currentComponent.indent) {
+      this.context.currentComponent = null;
+    }
+
     // Special case: if we're at indent 0 and parsing a component/variable/trigger,
     // ensure we're back at global scope (not in a trigger scope)
     if (indent === 0 && (this._isComponent(content) || this._isVariable(content) || this._isTrigger(content))) {
@@ -203,6 +211,11 @@ class Parser {
       // Modulation line - must be nested under an attribute
       this._parseModulation(content, indent);
       this._recordSource(this._ownerNode('modulation', content));
+    } else if (indent > 0 && !this.context.currentComponent && this._isComponent(content)) {
+      // Component declared inside a trigger scope (e.g. a per-note filter)
+      this._parseComponent(content, indent);
+      const sc = this.context.currentComponent;
+      this._recordSource(sc ? { kind: 'component', type: sc.type, name: sc.name, scopeKey: sc.scopeKey } : null);
     } else if (indent > 0 && (this.context.currentComponent || this.context.currentTrigger)) {
       // Indented line inside a component or trigger scope - must be an attribute
       this._parseAttribute(content, indent);
@@ -436,12 +449,14 @@ class Parser {
       return;
     }
 
-    // Set as current component for attribute parsing
+    // Set as current component for attribute parsing (indent tracked so a
+    // dedent back to this level ends the component's attribute block)
     this.context.currentComponent = {
       type: componentType,
       name: componentName,
       scope: isGlobal ? 'global' : 'trigger',
-      scopeKey: currentScope.key
+      scopeKey: currentScope.key,
+      indent
     };
   }
 

@@ -7,14 +7,13 @@
  * edits parse into the instance store, which drives both the panel and
  * the audio engine; panel edits write back into the text.
  */
-import { CHORD_DEFINITIONS } from './dsl/chords.js';
 import { SEED_DOCUMENT } from './seed-document.js';
-import { COMPONENT_SCHEMAS, TRIGGER_SCHEMAS, initializeChordValues } from './dsl/schemas.js';
+import { TRIGGER_SCHEMAS, initializeChordValues } from './dsl/schemas.js';
 import { instanceStore } from './dsl/instance-store.js';
 import { parser, initializeParser } from './dsl/parser.js';
 import { uiGenerator, initializeUIGenerator } from './ui/panel.js';
 import { waveformVisualizer, initializeVisualizer } from './ui/visualizer.js';
-import { audioEngine, initializeAudioEngine } from './engine/audio-engine.js';
+import { audioEngine, initializeAudioEngine } from './engine/engine.js';
 import { createEditor, uiEditAnnotation } from './editor/editor.js';
 import { makeIncrementKeymap } from './editor/increment.js';
 import { buildCommands, setupPalette } from './editor/palette.js';
@@ -26,28 +25,14 @@ import { changeFontSize, changeLineHeight } from './editor/appearance.js';
 // ============================================================================
 
 let audioContext;
-let polyphonyManager;
 let editorView = null;
 
 function initializeNewArchitecture() {
   initializeChordValues();
-  buildChordIntervals();
   initializeParser();
   initializeUIGenerator();
-  initializeAudioEngine(audioContext);
+  initializeAudioEngine(audioContext, instanceStore);
   console.log('New architecture initialized');
-}
-
-// Chord interval definitions (built from CHORD_DEFINITIONS in chords.js)
-let CHORD_INTERVALS = {};
-
-function buildChordIntervals() {
-  CHORD_INTERVALS = { 'none': [] };
-  CHORD_DEFINITIONS.forEach(chord => {
-    // Extract intervals (excluding root note at 0)
-    const intervals = chord.semitones.filter(st => st !== 0);
-    CHORD_INTERVALS[chord.name] = intervals;
-  });
 }
 
 // ============================================================================
@@ -86,7 +71,8 @@ function loadSavedDocument() {
 // PARSE/APPLY PIPELINE
 // ============================================================================
 // The editor calls scheduleSync() on text changes. Parsing and applying
-// stay distinct so a future transport can quantize the apply step.
+// stay distinct so a future transport can quantize the apply step
+// (engine.applySnapshot takes an `at` timestamp).
 
 const SYNC_DEBOUNCE_MS = 60;
 let syncTimer = null;
@@ -145,14 +131,7 @@ function applyParseResult(result, { rebuildUI = true } = {}) {
   }
 
   if (audioEngine) {
-    const masterRebuilt = audioEngine.initializeMaster();
-
-    // Reconnect the visualizer only when the master chain was actually
-    // torn down — a values-only edit must not churn nodes mid-note
-    if (masterRebuilt && waveformVisualizer && audioEngine.audioContext.state === 'running') {
-      waveformVisualizer.isConnected = false;
-      waveformVisualizer.ensureConnected();
-    }
+    audioEngine.applySnapshot();
   }
 }
 
@@ -286,122 +265,43 @@ window.updateTextFromUIChange = function(componentOrTrigger, name, attribute, va
 };
 
 // ============================================================================
-// POLYPHONY
+// NOTE INPUT (handle-based bookkeeping)
 // ============================================================================
+// Every input source (keyboard key, MIDI note) maps to ONE NoteHandle
+// captured at note-on; note-off just releases the handle. Chord contents
+// and modifier state are snapshotted by the engine at note-on, so editing
+// the document while holding notes can't strand voices.
 
-class PolyphonyManager {
-  constructor() {
-    this.activeNotes = new Map();
-  }
+const noteHandles = new Map(); // 'kb-z' | 'midi-60' -> NoteHandle
 
-  startNote(frequency, noteId, velocity = 127, isSynthetic = false, midiNote = null, keyChar = null) {
-    if (this.activeNotes.has(noteId)) {
-      this.stopNote(noteId);
-    }
+function startNote(inputId, midiNote, { velocity = 127, keyScope = null } = {}) {
+  if (!audioEngine) return;
+  stopNote(inputId);
+  noteHandles.set(inputId, audioEngine.noteOn(midiNote, { velocity, keyScope }));
+  if (waveformVisualizer) waveformVisualizer.ensureConnected();
+  updateNoteDisplay();
+}
 
-    // Resume audio context if suspended (required by browser autoplay policies)
-    if (audioEngine && audioEngine.audioContext.state === 'suspended') {
-      audioEngine.audioContext.resume().then(() => {
-        if (waveformVisualizer) {
-          waveformVisualizer.ensureConnected();
-        }
-      });
-    } else if (waveformVisualizer) {
-      waveformVisualizer.ensureConnected();
-    }
-
-    // Convert MIDI note or frequency to note name (e.g., 'c4')
-    const noteName = midiNote ? midiNoteToNoteName(midiNote) : frequencyToNoteName(frequency).toLowerCase();
-
-    // Determine key scope if a key is held
-    const keyScope = keyChar ? `key_${keyChar}` : null;
-
-    // Create note using audio engine
-    const note = audioEngine ? audioEngine.createNote(noteName, frequency, keyScope) : null;
-
-    if (note) {
-      note.isSynthetic = isSynthetic;
-      this.activeNotes.set(noteId, note);
-    }
-
-    updateNoteDisplay();
-  }
-
-  stopNote(noteId) {
-    const note = this.activeNotes.get(noteId);
-    if (note && audioEngine) {
-      audioEngine.stopNote(note);
-      this.activeNotes.delete(noteId);
-      updateNoteDisplay();
-    }
-  }
-
-  stopAllNotes() {
-    if (audioEngine) {
-      this.activeNotes.forEach((note) => audioEngine.stopNote(note));
-    }
-    this.activeNotes.clear();
+function stopNote(inputId) {
+  const handle = noteHandles.get(inputId);
+  if (handle) {
+    handle.off();
+    noteHandles.delete(inputId);
     updateNoteDisplay();
   }
 }
 
-// ============================================================================
-// CHORDS
-// ============================================================================
-
-// Calculate all frequencies for a chord based on root frequency
-function getChordFrequencies(rootFrequency, midiNote = null) {
-  // Get chord type from master trigger attributes (defaults to 'none')
-  let chordType = instanceStore ? instanceStore.getTriggerAttribute('master', 'chord') : null;
-  if (!chordType) {
-    chordType = 'none';
-  }
-
-  // Check for note-specific chord config (overrides global)
-  if (midiNote !== null) {
-    const noteName = midiNoteToNoteName(midiNote); // e.g., "c4"
-
-    // Check for note-specific chord in instance store
-    let noteScope = `note_${noteName}`;
-    let noteChord = instanceStore ? instanceStore.getTriggerAttribute(noteScope, 'chord') : null;
-
-    // If not found, check for wildcard match (note name without octave)
-    if (!noteChord) {
-      const noteNameWithoutOctave = noteName.replace(/\d+$/, ''); // e.g., "c4" -> "c"
-      noteScope = `note_${noteNameWithoutOctave}`;
-      noteChord = instanceStore ? instanceStore.getTriggerAttribute(noteScope, 'chord') : null;
-    }
-
-    // If note-specific chord is defined, use it
-    if (noteChord) {
-      chordType = noteChord;
-    }
-  }
-
-  let intervals = [];
-
-  // Check if it's a custom numeric definition (e.g., "-2 0 1 4 7")
-  if (/^[\d\s\-]+$/.test(chordType)) {
-    // Parse custom chord: split by spaces and convert to numbers
-    intervals = chordType.split(/\s+/).map(s => parseInt(s)).filter(n => !isNaN(n));
-  } else {
-    // Predefined chord from CHORD_INTERVALS
-    intervals = CHORD_INTERVALS[chordType] || [];
-    // For predefined chords, always include root (0)
-    if (!intervals.includes(0)) {
-      intervals = [0, ...intervals];
-    }
-  }
-
-  // Convert intervals to frequencies
-  return intervals.map(semitones => rootFrequency * Math.pow(2, semitones / 12));
+function stopAllNotes() {
+  if (audioEngine) audioEngine.allOff();
+  noteHandles.clear();
+  updateNoteDisplay();
 }
 
 // ============================================================================
 // NOTE DISPLAY
 // ============================================================================
 
-// Convert frequency to note name (e.g., 440Hz -> A4)
+// Convert frequency to note name for display (e.g., 440Hz -> A4)
 function frequencyToNoteName(frequency) {
   const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
   const midiNote = Math.round(12 * Math.log2(frequency / 440) + 69);
@@ -409,36 +309,23 @@ function frequencyToNoteName(frequency) {
   return `${noteNames[midiNote % 12]}${octave}`;
 }
 
-// Convert MIDI note number to note name (e.g., 60 -> c4)
-function midiNoteToNoteName(midiNote) {
-  const noteNames = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#', 'b'];
-  const octave = Math.floor(midiNote / 12) - 1;
-  return `${noteNames[midiNote % 12]}${octave}`;
-}
-
-// Update the note display to show currently playing notes
+// Root notes in teal, synthetic (chord) tones in muted gray
 function updateNoteDisplay() {
   const noteDisplayText = document.getElementById('note-display-text');
-  if (!noteDisplayText) return;
+  if (!noteDisplayText || !audioEngine) return;
 
-  if (polyphonyManager.activeNotes.size === 0) {
+  const voices = audioEngine.activeVoiceInfo();
+  if (voices.length === 0) {
     noteDisplayText.textContent = '--';
     return;
   }
 
-  // Display all currently active notes (for polyphony), sorted by frequency
-  const notes = Array.from(polyphonyManager.activeNotes.values())
-    .sort((a, b) => a.frequency - b.frequency);
-
-  // Root notes in teal, synthetic (chord) notes in muted gray
-  const noteHTML = notes.map(note => {
-    const noteName = frequencyToNoteName(note.frequency);
-    return note.isSynthetic
+  noteDisplayText.innerHTML = voices.map(v => {
+    const noteName = frequencyToNoteName(v.frequency);
+    return v.isSynthetic
       ? `<span style="color: #969896;">${noteName}</span>`
       : `<span style="color: #5fd3bc;">${noteName}</span>`;
   }).join(' <span style="color: #969896;">+</span> ');
-
-  noteDisplayText.innerHTML = noteHTML;
 }
 
 // ============================================================================
@@ -447,22 +334,11 @@ function updateNoteDisplay() {
 
 function handleMIDIMessage(message) {
   const [status, note, velocity] = message.data;
-  const rootFrequency = 440 * Math.pow(2, (note - 69) / 12);
 
   if (status === 144 && velocity > 0) {
-    // Note on - start all chord notes
-    const frequencies = getChordFrequencies(rootFrequency, note);
-    frequencies.forEach((freq, index) => {
-      const noteId = `midi-${note}-${index}`;
-      const isSynthetic = index > 0; // First note (index 0) is root, rest are synthetic
-      polyphonyManager.startNote(freq, noteId, velocity, isSynthetic, note);
-    });
+    startNote(`midi-${note}`, note, { velocity });
   } else if (status === 128 || (status === 144 && velocity === 0)) {
-    // Note off - stop all chord notes
-    const frequencies = getChordFrequencies(rootFrequency, note);
-    frequencies.forEach((freq, index) => {
-      polyphonyManager.stopNote(`midi-${note}-${index}`);
-    });
+    stopNote(`midi-${note}`);
   }
 }
 
@@ -499,7 +375,7 @@ document.addEventListener('click', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.target.id !== 'virtual-keyboard' || !polyphonyManager) return;
+  if (e.target.id !== 'virtual-keyboard' || !audioEngine) return;
 
   const key = e.key.toLowerCase();
 
@@ -516,35 +392,25 @@ document.addEventListener('keydown', (e) => {
     const keyElement = document.querySelector(`.key-label[data-key="${key}"]`);
     if (keyElement) keyElement.classList.add('active');
 
-    // Check if this key has trigger definition (makes it a modifier key)
+    // A key with trigger definitions is a modifier: it plays no note but
+    // its actions apply to notes played while it is held
     const keyScope = `key_${key}`;
-    const hasActions = instanceStore ? instanceStore.collectActions(keyScope).length > 0 : false;
-
+    const hasActions = instanceStore.collectActions(keyScope).length > 0;
     if (hasActions) {
-      // This is a modifier key - track it but don't play notes
       activeModifierKeys.add(key);
       return;
     }
 
-    // This is a note-playing key - get active modifier if any
     const activeModifier = activeModifierKeys.size > 0
       ? `key_${activeModifierKeys.values().next().value}`
       : null;
 
-    // Play the note - actions from activeModifier will be applied automatically
-    const rootFrequency = 440 * Math.pow(2, (midiNote - 69) / 12);
-    const frequencies = getChordFrequencies(rootFrequency, midiNote);
-
-    frequencies.forEach((freq, index) => {
-      const noteId = `keyboard-${key}-${index}`;
-      const isSynthetic = index > 0; // First note (index 0) is root, rest are synthetic
-      polyphonyManager.startNote(freq, noteId, 100, isSynthetic, midiNote, activeModifier ? activeModifier.slice(4) : null);
-    });
+    startNote(`kb-${key}`, midiNote, { velocity: 127, keyScope: activeModifier });
   }
 });
 
 document.addEventListener('keyup', (e) => {
-  if (e.target.id !== 'virtual-keyboard' || !polyphonyManager) return;
+  if (e.target.id !== 'virtual-keyboard' || !audioEngine) return;
 
   const key = e.key.toLowerCase();
   const midiNote = keyToNote[key];
@@ -554,32 +420,21 @@ document.addEventListener('keyup', (e) => {
     e.stopPropagation();
     activeKeys.delete(key);
 
-    // Remove highlight from the key
     const keyElement = document.querySelector(`.key-label[data-key="${key}"]`);
     if (keyElement) keyElement.classList.remove('active');
 
-    // Check if this was a modifier key
-    const keyScope = `key_${key}`;
-    const hasActions = instanceStore ? instanceStore.collectActions(keyScope).length > 0 : false;
-
-    if (hasActions) {
+    if (activeModifierKeys.has(key)) {
       activeModifierKeys.delete(key);
       return;
     }
 
-    // Stop the notes for regular keys
-    const rootFrequency = 440 * Math.pow(2, (midiNote - 69) / 12);
-    const frequencies = getChordFrequencies(rootFrequency, midiNote);
-
-    frequencies.forEach((freq, index) => {
-      polyphonyManager.stopNote(`keyboard-${key}-${index}`);
-    });
+    stopNote(`kb-${key}`);
   }
 });
 
 document.addEventListener('blur', (e) => {
-  if (e.target.id === 'virtual-keyboard' && polyphonyManager) {
-    polyphonyManager.stopAllNotes();
+  if (e.target.id === 'virtual-keyboard' && audioEngine) {
+    stopAllNotes();
     activeKeys.forEach(key => {
       const keyElement = document.querySelector(`.key-label[data-key="${key}"]`);
       if (keyElement) keyElement.classList.remove('active');
@@ -702,10 +557,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     initializeNewArchitecture();
 
-    // Visualizer connects to the engine's master output
+    // Visualizer connects to the engine's persistent master gain
     initializeVisualizer();
-
-    polyphonyManager = new PolyphonyManager();
 
     const saved = loadSavedDocument();
     createAppEditor(saved !== null ? saved : SEED_DOCUMENT);

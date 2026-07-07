@@ -11,7 +11,7 @@ import {
 } from './src/dsl/schemas.js';
 import { parser, initializeParser } from './src/dsl/parser.js';
 import { instanceStore } from './src/dsl/instance-store.js';
-import { AudioEngine } from './src/engine/audio-engine.js';
+import { AudioEngine } from './src/engine/engine.js';
 import { SEED_DOCUMENT } from './src/seed-document.js';
 
 const SEED = location.hash.length > 1
@@ -27,17 +27,15 @@ async function run() {
   initializeParser();
   const result = parser.parse(SEED);
 
-  const engine = new AudioEngine(offline, instanceStore, {
-    AttributeType, COMPONENT_SCHEMAS, TRIGGER_SCHEMAS, SchemaUtils
-  });
-  engine.initializeMaster();
+  const engine = new AudioEngine(offline, instanceStore);
+  engine.applySnapshot();
 
-  const note = engine.createNote('c4', 261.63);
+  const handle = engine.noteOn(60); // c4
 
   // Release the note mid-render
   const releaseAt = 0.5;
   offline.suspend(releaseAt).then(() => {
-    note.stop();
+    handle.off();
     offline.resume();
   });
 

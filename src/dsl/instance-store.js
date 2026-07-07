@@ -214,6 +214,11 @@ class InstanceStore {
     const storageKey = this._getComponentStorageKey(componentType);
 
     if (scope === ScopeType.GLOBAL) {
+      // Buckets are created on demand so new component types need no
+      // hard-coded bucket list (the old fixed list silently broke 'noise')
+      if (!this.components.global[storageKey]) {
+        this.components.global[storageKey] = {};
+      }
       this.components.global[storageKey][name] = {
         type: componentType,
         name,
@@ -224,19 +229,19 @@ class InstanceStore {
       // Trigger scope
       if (!this.components.triggers[scopeKey]) {
         this.components.triggers[scopeKey] = {
-          type: scope,
-          components: {
-            oscillators: {},
-            lfos: {},
-            envelopes: {},
-            filters: {},
-            compressors: {}
-          },
+          type: scopeKey === 'master' ? 'master' :
+                scopeKey.startsWith('note_') ? 'note' :
+                scopeKey.startsWith('key_') ? 'key' : scope,
+          components: {},
           attributes: {},
           variableOverrides: {}
         };
       }
-      this.components.triggers[scopeKey].components[storageKey][name] = {
+      const buckets = this.components.triggers[scopeKey].components;
+      if (!buckets[storageKey]) {
+        buckets[storageKey] = {};
+      }
+      buckets[storageKey][name] = {
         type: componentType,
         name,
         scope: ScopeType.TRIGGER,
@@ -260,10 +265,10 @@ class InstanceStore {
     const storageKey = this._getComponentStorageKey(info.type);
 
     if (info.scope === ScopeType.GLOBAL) {
-      return this.components.global[storageKey][name] || null;
+      return this.components.global[storageKey]?.[name] || null;
     } else {
       const trigger = this.components.triggers[info.scopeKey];
-      return trigger?.components[storageKey][name] || null;
+      return trigger?.components[storageKey]?.[name] || null;
     }
   }
 
@@ -278,7 +283,7 @@ class InstanceStore {
     const storageKey = this._getComponentStorageKey(componentType);
 
     if (scope === ScopeType.GLOBAL) {
-      return this.components.global[storageKey];
+      return this.components.global[storageKey] || {};
     } else {
       const trigger = this.components.triggers[scopeKey];
       return trigger?.components[storageKey] || {};
@@ -296,14 +301,12 @@ class InstanceStore {
       return this.components.global;
     }
 
-    // For trigger scopes, combine global + trigger-specific
-    const result = {
-      oscillators: { ...this.components.global.oscillators },
-      lfos: { ...this.components.global.lfos },
-      envelopes: { ...this.components.global.envelopes },
-      filters: { ...this.components.global.filters },
-      compressors: { ...this.components.global.compressors }
-    };
+    // For trigger scopes, combine global + trigger-specific (generic over
+    // whatever buckets exist)
+    const result = {};
+    for (const [storageKey, instances] of Object.entries(this.components.global)) {
+      result[storageKey] = { ...instances };
+    }
 
     const trigger = this.components.triggers[scopeKey];
     if (trigger) {
@@ -316,6 +319,16 @@ class InstanceStore {
     }
 
     return result;
+  }
+
+  /**
+   * Get ONLY the components declared inside a trigger scope (no global
+   * merge) — e.g. per-voice processors declared under a note/key
+   * @param {string} scopeKey - Trigger scope key
+   * @returns {object} componentType-bucket -> { name -> instance }
+   */
+  getTriggerScopedComponents(scopeKey) {
+    return this.components.triggers[scopeKey]?.components || {};
   }
 
   /**
