@@ -634,47 +634,6 @@ class NoteInstance {
   }
 
   /**
-   * Apply pitch modulation from LFO (DEPRECATED - use _applyModulation instead)
-   */
-  _applyPitchModulation(oscillator, lfoName) {
-    const lfoComponent = this.store.getComponent(lfoName);
-    console.log(`_applyPitchModulation: Looking for LFO "${lfoName}":`, lfoComponent);
-    if (!lfoComponent) {
-      console.warn(`LFO component "${lfoName}" not found!`);
-      return;
-    }
-
-    // Create LFO
-    const lfo = this.audioContext.createOscillator();
-
-    const wave = this._resolveValue(lfoComponent.attributes.wave) || 'sine';
-    const rate = this._resolveValue(lfoComponent.attributes.rate) || 5;
-    const depth = this._resolveValue(lfoComponent.attributes.depth) || 10;
-
-    console.log(`Creating LFO: wave=${wave}, rate=${rate}Hz, depth=${depth}cents`);
-
-    lfo.type = wave;
-    lfo.frequency.value = rate;
-
-    // Create depth gain (convert cents to Hz)
-    const depthGain = this.audioContext.createGain();
-    const depthInHz = oscillator.frequency.value * (depth / 1200);
-    depthGain.gain.value = depthInHz;
-
-    console.log(`LFO depth: ${depth} cents = ${depthInHz.toFixed(2)} Hz at base freq ${oscillator.frequency.value}Hz`);
-
-    // Connect: LFO -> depthGain -> oscillator.frequency
-    lfo.connect(depthGain);
-    depthGain.connect(oscillator.frequency);
-
-    lfo.start();
-    console.log(`✓ LFO started and connected to oscillator frequency`);
-
-    // Track LFO
-    this.lfos.push(lfo);
-  }
-
-  /**
    * Apply master envelope
    */
   _applyMasterEnvelope() {
