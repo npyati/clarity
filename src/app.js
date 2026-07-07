@@ -1,4 +1,5 @@
 import { CHORD_DEFINITIONS } from './dsl/chords.js';
+import { SEED_DOCUMENT_LINES } from './seed-document.js';
 import { variable_names } from './dsl/name-pool.js';
 import { COMPONENT_SCHEMAS, TRIGGER_SCHEMAS, initializeChordValues } from './dsl/schemas.js';
 import { instanceStore } from './dsl/instance-store.js';
@@ -1067,42 +1068,6 @@ function focusBlock(blockElement, atEnd = false) {
 }
 
 // Initialize blocks with default content
-// Seed document — also serves as the smoke-test fixture
-// (note-specific overrides are not working yet in the parser;
-// will return as: note c4 with variable vibrato_depth = 40)
-const SEED_DOCUMENT_LINES = [
-  'variable vibrato_depth = 20',
-  'variable vibrato_rate = 5',
-  '',
-  'variable lead_volume = 60',
-  'variable bass_volume = 40',
-  '',
-  'oscillator lead',
-  '  wave triangle',
-  '  octave 0',
-  '  volume lead_volume',
-  '  pitch 0',
-  '    modulation vibrato',
-  '',
-  'oscillator bass',
-  '  wave sine',
-  '  octave -1',
-  '  volume bass_volume',
-  '',
-  // LFO for vibrato (order doesn't matter - parser handles forward references)
-  'lfo vibrato',
-  '  rate vibrato_rate + 2',
-  '  depth vibrato_depth * 0.5',
-  '  wave sine',
-  '',
-  'master',
-  '  volume 80',
-  '  attack 10',
-  '  sustain 100',
-  '  release 500',
-  '',
-];
-
 const DOC_STORAGE_KEY = 'clarity.doc';
 
 // Autosave is best-effort; the text itself is the source of truth, so a

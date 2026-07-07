@@ -12,40 +12,11 @@ import {
 import { parser, initializeParser } from './src/dsl/parser.js';
 import { instanceStore } from './src/dsl/instance-store.js';
 import { AudioEngine } from './src/engine/audio-engine.js';
-
-const DEFAULT_SEED = [
-  'variable vibrato_depth = 20',
-  'variable vibrato_rate = 5',
-  'variable lead_volume = 60',
-  'variable bass_volume = 40',
-  '',
-  'oscillator lead',
-  '  wave triangle',
-  '  octave 0',
-  '  volume lead_volume',
-  '  pitch 0',
-  '    modulation vibrato',
-  '',
-  'oscillator bass',
-  '  wave sine',
-  '  octave -1',
-  '  volume bass_volume',
-  '',
-  'lfo vibrato',
-  '  rate vibrato_rate + 2',
-  '  depth vibrato_depth * 0.5',
-  '  wave sine',
-  '',
-  'master',
-  '  volume 80',
-  '  attack 10',
-  '  sustain 100',
-  '  release 500',
-].join('\n');
+import { SEED_DOCUMENT } from './src/seed-document.js';
 
 const SEED = location.hash.length > 1
   ? decodeURIComponent(location.hash.slice(1))
-  : DEFAULT_SEED;
+  : SEED_DOCUMENT;
 
 async function run() {
   const sampleRate = 48000;

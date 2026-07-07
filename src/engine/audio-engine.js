@@ -1,5 +1,5 @@
 import { AttributeType, COMPONENT_SCHEMAS, TRIGGER_SCHEMAS, SchemaUtils } from '../dsl/schemas.js';
-import { ExpressionEvaluator } from '../dsl/parser.js';
+import { ExpressionEvaluator } from '../dsl/expression.js';
 import { instanceStore } from '../dsl/instance-store.js';
 /**
  * ============================================================================
