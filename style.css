@@ -743,6 +743,225 @@ input[type="range"]::-moz-range-thumb:hover {
   color: var(--text-muted);
 }
 
+/* Claude panel */
+#claude-fab {
+  position: fixed;
+  right: var(--space-5);
+  bottom: var(--space-5);
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-raised);
+  color: var(--accent-warm);
+  cursor: pointer;
+  z-index: 1003;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+#claude-fab:hover {
+  transform: scale(1.08);
+  border-color: var(--accent-warm);
+}
+
+.claude-mark {
+  width: 20px;
+  height: 20px;
+}
+
+#claude-panel {
+  position: fixed;
+  right: var(--space-5);
+  bottom: calc(var(--space-5) + 56px);
+  width: min(380px, calc(100vw - 40px));
+  height: min(520px, calc(100vh - 120px));
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  z-index: 1003;
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#claude-panel.open {
+  display: flex;
+}
+
+.claude-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-strong);
+  background: var(--bg-raised);
+}
+
+.claude-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--accent-warm);
+  margin-right: auto;
+}
+
+.claude-title .claude-mark {
+  width: 14px;
+  height: 14px;
+}
+
+#claude-model {
+  width: auto;
+  padding: 2px 22px 2px var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.claude-icon-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: var(--text-lg);
+  cursor: pointer;
+  padding: 0 var(--space-1);
+}
+
+.claude-icon-btn:hover {
+  color: var(--text);
+}
+
+#claude-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-md);
+  line-height: 1.5;
+}
+
+.claude-hello {
+  color: var(--text-muted);
+  font-size: var(--text-base);
+  padding: var(--space-2);
+}
+
+.claude-msg.user {
+  align-self: flex-end;
+  background: var(--accent-soft);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2) var(--space-3);
+  max-width: 88%;
+}
+
+.claude-msg.assistant {
+  align-self: stretch;
+  color: var(--text);
+}
+
+.claude-msg pre {
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  background: var(--bg-deep);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+  overflow-x: auto;
+  margin: var(--space-1) 0;
+}
+
+.claude-msg code {
+  font-family: var(--font-mono);
+  background: var(--bg-deep);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
+.claude-tool {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+  padding: 2px 0;
+}
+
+.claude-empty {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.claude-typing {
+  display: flex;
+  gap: 4px;
+  padding: var(--space-2);
+}
+
+.claude-typing span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  animation: claude-blink 1.2s infinite;
+}
+
+.claude-typing span:nth-child(2) { animation-delay: 0.2s; }
+.claude-typing span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes claude-blink {
+  0%, 60%, 100% { opacity: 0.25; }
+  30% { opacity: 1; }
+}
+
+.claude-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border-strong);
+  background: var(--bg-raised);
+}
+
+#claude-input {
+  flex: 1;
+  resize: none;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  line-height: 1.4;
+  padding: var(--space-2);
+  outline: none;
+  max-height: 120px;
+}
+
+#claude-input:focus {
+  border-color: var(--accent);
+}
+
+#claude-send {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--accent-warm);
+  font-size: var(--text-lg);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+#claude-send:hover {
+  border-color: var(--accent-warm);
+}
+
 /* Motion preferences */
 @media (prefers-reduced-motion: reduce) {
   * {

@@ -20,6 +20,7 @@ import { buildCommands, setupPalette } from './editor/palette.js';
 import { clarityDiagnostics } from './editor/diagnostics.js';
 import { changeFontSize, changeLineHeight } from './editor/appearance.js';
 import { toggleCheatsheet } from './ui/cheatsheet.js';
+import { initClaudePanel } from './ui/claude-panel.js';
 
 // ============================================================================
 // BOOTSTRAP
@@ -108,6 +109,18 @@ let lastParseResult = null;
 
 function getDocumentText() {
   return editorView ? editorView.state.doc.toString() : '';
+}
+
+// Full-document replacement from outside the editor (Claude panel edits).
+// Unannotated, so it flows through the normal debounced parse -> audio ->
+// panel pipeline like any user edit; CodeMirror maps the cursor through.
+function setDocumentText(text) {
+  if (!editorView) return;
+  const current = editorView.state.doc.toString();
+  if (current === text) return;
+  editorView.dispatch({
+    changes: { from: 0, to: current.length, insert: text },
+  });
 }
 
 function getSourceMap() {
@@ -727,6 +740,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // First parse + panel + audio configuration
     syncUIFromText();
+
+    // Claude panel (dev server only — hides itself in production builds)
+    initClaudePanel({ getDoc: getDocumentText, setDoc: setDocumentText });
 
     console.log('Initialization complete!');
   } catch (error) {

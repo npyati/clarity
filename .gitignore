@@ -9,3 +9,6 @@ clarity.code-workspace
 # Build/deps
 node_modules/
 dist/
+
+# Claude panel workspace (live document mirror)
+.claude-live/

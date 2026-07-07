@@ -70,6 +70,60 @@ function buildContent() {
   return root;
 }
 
+/**
+ * The same schema-generated reference as markdown — handed to the Claude
+ * panel's CLI turns as SYNTAX.md so the assistant only writes syntax the
+ * parser actually accepts.
+ */
+export function syntaxMarkdown() {
+  const lines = [
+    '# Clarity syntax reference',
+    '',
+    'A Clarity document is an indented plain-text instrument definition.',
+    'Attributes are indented 2 spaces under their component/trigger;',
+    'modulation lines are indented 4 spaces under the attribute they modulate.',
+    '',
+    '## Basics',
+    '',
+  ];
+  for (const [code, desc] of GENERAL) {
+    lines.push('```', code, '```', desc, '');
+  }
+
+  const emit = (title, entries) => {
+    lines.push(`## ${title}`, '');
+    for (const [type, schema, name] of entries) {
+      lines.push(`### ${type} — ${schema.description || ''}`, '', '```');
+      lines.push(`${type}${name ? ' ' + name : ''}`);
+      for (const [attrName, attrSchema] of Object.entries(schema.attributes || {})) {
+        const parts = [`  ${attrName}`];
+        if (attrSchema.default !== undefined && attrSchema.default !== null) parts.push(String(attrSchema.default));
+        let comment = attrSchema.description || '';
+        if (attrSchema.values) comment += ` (one of: ${attrSchema.values.join(', ')})`;
+        else if (attrSchema.min !== undefined && attrSchema.max !== undefined) comment += ` (${attrSchema.min}..${attrSchema.max}${attrSchema.unit ? ' ' + attrSchema.unit : ''})`;
+        lines.push(parts.join(' ') + (comment ? `   # ${comment}` : ''));
+      }
+      lines.push('```', '');
+    }
+  };
+
+  emit('Components (audio building blocks; globally unique names)',
+    Object.entries(COMPONENT_SCHEMAS).map(([t, s]) => [t, s, 'name']));
+  emit('Triggers (scopes)',
+    Object.entries(TRIGGER_SCHEMAS).map(([t, s]) => [t, s, { note: 'c4', key: 'f', cc: '74' }[t] || '']));
+
+  lines.push(
+    '## Wiring notes',
+    '',
+    '- `master` `filter` / `compressor` / `effect` attributes take a component NAME (e.g. `effect echo`).',
+    '- An attribute like `pitch 0` can carry `    modulation <lfo|envelope|noise name>` (4-space indent), optionally scaled: `modulation vibrato * 0.5`.',
+    '- Components declared inside a `note`/`key` scope apply per-voice (e.g. a per-note filter).',
+    '- Variables: `variable name = value` or with a range `variable cutoff = 2000 [200, 8000]`; reference them by bare name in attribute values and math expressions (`rate vibrato_rate + 2`).',
+    ''
+  );
+  return lines.join('\n');
+}
+
 let panel = null;
 
 export function toggleCheatsheet() {
