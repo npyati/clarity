@@ -13,7 +13,7 @@ import { COMPONENT_SCHEMAS, TRIGGER_SCHEMAS } from '../dsl/schemas.js';
 import { instanceStore } from '../dsl/instance-store.js';
 import { variable_names } from '../dsl/name-pool.js';
 
-const TRIGGER_DEFAULT_NAMES = { note: 'c4', key: 'f' };
+const TRIGGER_DEFAULT_NAMES = { note: 'c4', key: 'f', cc: '74' };
 
 function pickUnusedName() {
   const used = new Set(Object.keys(instanceStore.nameRegistry || {}));

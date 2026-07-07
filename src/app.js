@@ -346,13 +346,38 @@ function updateNoteDisplay() {
 // MIDI INPUT
 // ============================================================================
 
+// CC mappings come from `cc <number>` triggers: the controller sweeps the
+// mapped variable across its [min, max] range, writing back into the text
+// like any panel edit
+function handleMIDIControlChange(ccNumber, ccValue) {
+  const target = instanceStore.getTriggerAttribute(`cc_${ccNumber}`, 'controls');
+  const varName = target && typeof target === 'object' ? target.value : target;
+  if (!varName) return;
+
+  const metadata = instanceStore.getVariableMetadata(varName);
+  if (!metadata) return;
+
+  const min = metadata.min !== null && metadata.min !== undefined ? metadata.min : 0;
+  const max = metadata.max !== null && metadata.max !== undefined ? metadata.max : 100;
+  const range = max - min;
+  let value = min + (ccValue / 127) * range;
+  if (range <= 1) value = Math.round(value * 100) / 100;
+  else if (range <= 20) value = Math.round(value * 10) / 10;
+  else value = Math.round(value);
+
+  window.updateTextFromUIChange('variable', varName, '', value);
+}
+
 function handleMIDIMessage(message) {
   const [status, note, velocity] = message.data;
+  const kind = status & 0xf0;
 
-  if (status === 144 && velocity > 0) {
+  if (kind === 144 && velocity > 0) {
     startNote(`midi-${note}`, note, { velocity });
-  } else if (status === 128 || (status === 144 && velocity === 0)) {
+  } else if (kind === 128 || (kind === 144 && velocity === 0)) {
     stopNote(`midi-${note}`);
+  } else if (kind === 176) {
+    handleMIDIControlChange(note, velocity);
   }
 }
 
@@ -497,6 +522,42 @@ function focusVirtualKeyboard() {
   return true;
 }
 
+// ============================================================================
+// RECORDING (master output -> webm download)
+// ============================================================================
+
+let recorder = null;
+let recordedChunks = [];
+
+function startRecording() {
+  if (recorder || !audioEngine || !audioEngine.recordDestination) return;
+  recordedChunks = [];
+  recorder = new MediaRecorder(audioEngine.recordDestination.stream);
+  recorder.ondataavailable = (e) => {
+    if (e.data.size > 0) recordedChunks.push(e.data);
+  };
+  recorder.onstop = () => {
+    const blob = new Blob(recordedChunks, { type: recorder.mimeType || 'audio/webm' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `clarity-${new Date().toISOString().replace(/[:.]/g, '-')}.webm`;
+    a.click();
+    URL.revokeObjectURL(url);
+    recorder = null;
+    recordedChunks = [];
+    document.body.classList.remove('recording');
+  };
+  recorder.start();
+  document.body.classList.add('recording');
+}
+
+function stopRecording() {
+  if (recorder && recorder.state !== 'inactive') {
+    recorder.stop();
+  }
+}
+
 function createAppEditor(initialDoc) {
   const host = document.getElementById('parameters');
 
@@ -514,6 +575,16 @@ function createAppEditor(initialDoc) {
           changes: { from: 0, to: view.state.doc.length, insert: SEED_DOCUMENT },
         });
       },
+    },
+    {
+      name: 'Start Recording',
+      description: 'Record the master output (stop to download a .webm)',
+      run: () => startRecording(),
+    },
+    {
+      name: 'Stop Recording & Download',
+      description: 'Finish recording and download the audio file',
+      run: () => stopRecording(),
     },
     {
       name: 'Increase Text Size',

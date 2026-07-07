@@ -394,15 +394,8 @@ class Parser {
       return;
     }
 
-    // Create scope key
-    let scopeKey;
-    if (triggerType === 'master') {
-      scopeKey = 'master';
-    } else if (triggerType === 'note') {
-      scopeKey = `note_${triggerName}`;
-    } else if (triggerType === 'key') {
-      scopeKey = `key_${triggerName}`;
-    }
+    // Create scope key (generic: works for any named trigger type)
+    const scopeKey = triggerType === 'master' ? 'master' : `${triggerType}_${triggerName}`;
 
     // Push scope
     this.context.pushScope(triggerType, scopeKey, indent);
@@ -581,14 +574,23 @@ class Parser {
    * Format: modulation [lfoname|envelopename]
    */
   _parseModulation(content, indent) {
-    // Extract modulator name
-    const parts = content.split(' ');
-    if (parts.length < 2) {
+    // Extract modulator name and optional scaling amount:
+    //   modulation vibrato
+    //   modulation vibrato * 0.5
+    const rest = content.replace(/^modulation\s+/, '').trim();
+    if (!rest) {
       this.context.addError('Modulation requires a modulator name (e.g., "modulation vibrato")');
       return;
     }
 
-    const modulatorName = parts.slice(1).join(' ').trim();
+    const match = rest.match(/^([a-zA-Z_][\w]*)(?:\s*\*\s*(-?\d+\.?\d*))?$/);
+    if (!match) {
+      this.context.addError(`Invalid modulation syntax: "${rest}" (expected "name" or "name * amount")`);
+      return;
+    }
+
+    const modulatorName = match[1];
+    const amount = match[2] !== undefined ? parseFloat(match[2]) : 1;
 
     // Check if we have a current attribute
     if (!this.context.currentAttribute) {
@@ -600,7 +602,8 @@ class Parser {
     const modulationRef = {
       type: 'component_ref',
       value: modulatorName,
-      componentType: null  // Will be resolved in Pass 2
+      componentType: null,  // Will be resolved in Pass 2
+      amount
     };
 
     // Update the attribute's modulation

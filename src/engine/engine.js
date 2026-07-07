@@ -44,6 +44,13 @@ export class AudioEngine {
     this.masterGain.gain.value = 0.8;
     this.masterGain.connect(audioContext.destination);
 
+    // Recording tap (realtime contexts only; offline contexts lack it)
+    this.recordDestination = null;
+    if (typeof audioContext.createMediaStreamDestination === 'function') {
+      this.recordDestination = audioContext.createMediaStreamDestination();
+      this.masterGain.connect(this.recordDestination);
+    }
+
     // Rebuilt-on-structure-change bus section
     this.busIn = null;
     this._busProcessors = []; // [{ name, processor }]
@@ -78,11 +85,14 @@ export class AudioEngine {
   // --------------------------------------------------------------------
 
   _masterRefs() {
-    const filterRef = this.store.getTriggerAttribute('master', 'filter');
-    const compressorRef = this.store.getTriggerAttribute('master', 'compressor');
+    const ref = (attr) => {
+      const value = this.store.getTriggerAttribute('master', attr);
+      return (value && value.type === 'component_ref') ? value.value : null;
+    };
     return {
-      filter: (filterRef && filterRef.type === 'component_ref') ? filterRef.value : null,
-      compressor: (compressorRef && compressorRef.type === 'component_ref') ? compressorRef.value : null,
+      filter: ref('filter'),
+      compressor: ref('compressor'),
+      effect: ref('effect'),
     };
   }
 
@@ -98,9 +108,9 @@ export class AudioEngine {
     const refs = this._masterRefs();
     this.busIn = this.audioContext.createGain();
 
-    // busIn -> [compressor] -> [filter] -> masterGain
+    // busIn -> [compressor] -> [filter] -> [effect] -> masterGain
     let tail = this.busIn;
-    for (const name of [refs.compressor, refs.filter]) {
+    for (const name of [refs.compressor, refs.filter, refs.effect]) {
       if (!name) continue;
       const component = this.store.getComponent(name);
       if (!component || roleOf(component.type) !== ComponentRole.PROCESSOR) continue;
@@ -114,6 +124,7 @@ export class AudioEngine {
 
     this._lastFilterRef = refs.filter;
     this._lastCompressorRef = refs.compressor;
+    this._lastEffectRef = refs.effect;
   }
 
   /**
@@ -125,17 +136,21 @@ export class AudioEngine {
     const refs = this._masterRefs();
     const structureChanged =
       refs.filter !== this._lastFilterRef ||
-      refs.compressor !== this._lastCompressorRef;
+      refs.compressor !== this._lastCompressorRef ||
+      refs.effect !== this._lastEffectRef;
 
     if (structureChanged) {
       this._rebuildBus();
     } else {
-      // Values-only: refresh every bound processor param live
+      // Values-only: refresh every bound processor param live. paramScale
+      // converts text units to param units (e.g. delay ms -> seconds)
       for (const { name, processor } of this._busProcessors) {
         const component = this.store.getComponent(name);
         if (!component) continue;
         for (const [attrName, param] of Object.entries(processor.params)) {
-          const target = resolveNumeric(this.store, component.attributes[attrName], null, param.value);
+          const scale = processor.paramScale?.[attrName] ?? 1;
+          const raw = resolveNumeric(this.store, component.attributes[attrName], null, param.value / scale);
+          const target = raw * scale;
           if (Math.abs(target - param.value) > 1e-6) {
             smoothSet(this.audioContext, param, target);
           }

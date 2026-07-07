@@ -146,7 +146,8 @@ export class Voice {
     }
     const modulator = createModulator(this.ctx, this.store, component, this.scopeKey);
     if (modulator) {
-      modulator.connect(param, unit, baseValue, when);
+      const amount = Number.isFinite(modulatorRef.amount) ? modulatorRef.amount : 1;
+      modulator.connect(param, unit, baseValue, when, amount);
       this.modulators.push(modulator);
     }
   }

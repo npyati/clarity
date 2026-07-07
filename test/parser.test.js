@@ -62,8 +62,6 @@ describe('Parser element types', () => {
   });
 
   it('parses components nested inside trigger scopes', () => {
-    // (note-level attributes like 'chord' are still a schema gap —
-    // TRIGGER_SCHEMAS.note has no attributes; tracked for Level 4)
     const result = parse([
       'oscillator lead',
       '  wave sawtooth',
@@ -72,12 +70,72 @@ describe('Parser element types', () => {
       '  lowpass damp',
       '    frequency 300',
       '    resonance 1',
+      '  chord major',
     ]);
     expect(result.success).toBe(true);
     const scoped = store.getTriggerScopedComponents('note_c4');
     expect(Object.keys(scoped.filters || {})).toEqual(['damp']);
     const damp = store.getComponent('damp');
     expect(damp.attributes.frequency).toBeDefined();
+    // The dedented 'chord major' attaches to the note trigger, not the filter
+    expect(store.getTriggerAttribute('note_c4', 'chord')).toBe('major');
+  });
+
+  it('parses note-level chords (per-note chord overrides)', () => {
+    const result = parse(['note c', '  chord minor']);
+    expect(result.success).toBe(true);
+    expect(store.getTriggerAttribute('note_c', 'chord')).toBe('minor');
+  });
+
+  it('parses modulation amounts (modulation vibrato * 0.5)', () => {
+    const result = parse([
+      'oscillator lead',
+      '  pitch 0',
+      '    modulation vibrato * 0.5',
+      '',
+      'lfo vibrato',
+      '  rate 5',
+    ]);
+    expect(result.success).toBe(true);
+    const pitch = store.getComponent('lead').attributes.pitch;
+    expect(pitch.modulation).toMatchObject({ value: 'vibrato', amount: 0.5 });
+  });
+
+  it('defaults modulation amount to 1', () => {
+    parse(['oscillator lead', '  pitch 0', '    modulation wob', '', 'lfo wob', '  rate 1']);
+    expect(store.getComponent('lead').attributes.pitch.modulation.amount).toBe(1);
+  });
+
+  it('parses cc triggers mapping controllers to variables', () => {
+    const result = parse([
+      'variable cutoff = 2000 [200, 8000]',
+      '',
+      'cc 74',
+      '  controls cutoff',
+    ]);
+    expect(result.success).toBe(true);
+    const target = store.getTriggerAttribute('cc_74', 'controls');
+    expect(target).toMatchObject({ type: 'variable_ref', value: 'cutoff' });
+  });
+
+  it('parses effect components (delay/reverb/distortion/pan) and master effect ref', () => {
+    const result = parse([
+      'oscillator lead',
+      '  wave sine',
+      '',
+      'delay echo',
+      '  time 250',
+      '  feedback 40',
+      '  mix 35',
+      '',
+      'master',
+      '  effect echo',
+    ]);
+    expect(result.success).toBe(true);
+    expect(store.getComponent('echo').type).toBe('delay');
+    expect(store.getTriggerAttribute('master', 'effect')).toMatchObject({
+      type: 'component_ref', value: 'echo',
+    });
   });
 
   it('supports forward references', () => {

@@ -208,6 +208,114 @@ const COMPONENT_SCHEMAS = {
     }
   },
 
+  delay: {
+    role: ComponentRole.PROCESSOR,
+    description: 'Echo/delay effect',
+    attributes: {
+      time: {
+        type: AttributeType.TIME_MS,
+        min: 1,
+        max: 2000,
+        step: 1,
+        default: 300,
+        description: 'Delay time',
+        ui: { control: 'slider', label: 'delay time' },
+        canReference: [AttributeType.VARIABLE_REF]
+      },
+      feedback: {
+        type: AttributeType.PERCENTAGE,
+        min: 0,
+        max: 95,
+        step: 1,
+        default: 35,
+        description: 'Echo feedback amount',
+        ui: { control: 'slider' },
+        canReference: [AttributeType.VARIABLE_REF]
+      },
+      mix: {
+        type: AttributeType.PERCENTAGE,
+        min: 0,
+        max: 100,
+        step: 1,
+        default: 40,
+        description: 'Wet/dry balance',
+        ui: { control: 'slider' },
+        canReference: [AttributeType.VARIABLE_REF]
+      }
+    }
+  },
+
+  reverb: {
+    role: ComponentRole.PROCESSOR,
+    description: 'Reverberation (generated impulse response)',
+    attributes: {
+      decay: {
+        type: AttributeType.TIME_MS,
+        min: 100,
+        max: 8000,
+        step: 50,
+        default: 1500,
+        description: 'Reverb tail length',
+        ui: { control: 'slider', label: 'decay time' },
+        canReference: [AttributeType.VARIABLE_REF]
+      },
+      mix: {
+        type: AttributeType.PERCENTAGE,
+        min: 0,
+        max: 100,
+        step: 1,
+        default: 30,
+        description: 'Wet/dry balance',
+        ui: { control: 'slider' },
+        canReference: [AttributeType.VARIABLE_REF]
+      }
+    }
+  },
+
+  distortion: {
+    role: ComponentRole.PROCESSOR,
+    description: 'Waveshaping distortion',
+    attributes: {
+      amount: {
+        type: AttributeType.INTEGER,
+        min: 0,
+        max: 100,
+        step: 1,
+        default: 25,
+        description: 'Drive amount',
+        ui: { control: 'slider' },
+        canReference: [AttributeType.VARIABLE_REF]
+      },
+      mix: {
+        type: AttributeType.PERCENTAGE,
+        min: 0,
+        max: 100,
+        step: 1,
+        default: 100,
+        description: 'Wet/dry balance',
+        ui: { control: 'slider' },
+        canReference: [AttributeType.VARIABLE_REF]
+      }
+    }
+  },
+
+  pan: {
+    role: ComponentRole.PROCESSOR,
+    description: 'Stereo position',
+    attributes: {
+      position: {
+        type: AttributeType.INTEGER,
+        min: -100,
+        max: 100,
+        step: 1,
+        default: 0,
+        description: 'Stereo position (-100 left, 100 right)',
+        ui: { control: 'slider' },
+        canReference: [AttributeType.VARIABLE_REF]
+      }
+    }
+  },
+
   envelope: {
     role: ComponentRole.MODULATOR,
     description: 'ADSR envelope for modulation',
@@ -250,6 +358,16 @@ const COMPONENT_SCHEMAS = {
         default: 500,
         description: 'Release time',
         ui: { control: 'slider', label: 'release time' },
+        canReference: [AttributeType.VARIABLE_REF]
+      },
+      depth: {
+        type: AttributeType.NUMBER,
+        min: 0,
+        max: 400,
+        step: 1,
+        default: 100,
+        description: 'Modulation depth (cents for pitch targets, % of base for gain/frequency targets)',
+        ui: { control: 'slider' },
         canReference: [AttributeType.VARIABLE_REF]
       }
     }
@@ -511,6 +629,11 @@ const TRIGGER_SCHEMAS = {
         acceptsComponents: ['compressor'],
         description: 'Master compressor'
       },
+      effect: {
+        type: AttributeType.COMPONENT_REF,
+        acceptsComponents: ['delay', 'reverb', 'distortion', 'pan'],
+        description: 'Master effect'
+      },
       envelope: {
         type: AttributeType.COMPONENT_REF,
         acceptsComponents: ['envelope'],
@@ -530,9 +653,44 @@ const TRIGGER_SCHEMAS = {
   note: {
     description: 'Note-specific scope',
     requiresName: true,
-    canHaveAttributes: false,
+    canHaveAttributes: true,
     canContainComponents: true,
-    canOverrideVariables: true
+    canOverrideVariables: true,
+    attributes: {
+      chord: {
+        type: AttributeType.ENUM,
+        values: ['none'], // Populated from chords.js via initializeChordValues()
+        default: 'none',
+        description: 'Chord played for this note (overrides the master chord)',
+        ui: { control: 'select' }
+      },
+      detune: {
+        type: AttributeType.INTEGER,
+        min: -1200,
+        max: 1200,
+        step: 1,
+        default: 0,
+        unit: 'cents',
+        description: 'Detune applied to this note',
+        ui: { control: 'slider' },
+        canReference: [AttributeType.VARIABLE_REF]
+      }
+    }
+  },
+
+  cc: {
+    description: 'MIDI CC mapping — the named controller drives a variable',
+    requiresName: true,
+    canHaveAttributes: true,
+    canContainComponents: false,
+    canOverrideVariables: false,
+    attributes: {
+      controls: {
+        type: AttributeType.VARIABLE_REF,
+        description: "Variable this CC controls (uses the variable's [min, max] range)",
+        canReference: [AttributeType.VARIABLE_REF]
+      }
+    }
   },
 
   key: {
@@ -672,6 +830,7 @@ function initializeChordValues() {
 
   const chordNames = ['none', ...CHORD_DEFINITIONS.map(c => c.name)];
   TRIGGER_SCHEMAS.master.attributes.chord.values = chordNames;
+  TRIGGER_SCHEMAS.note.attributes.chord.values = chordNames;
 
   console.log('Chord values initialized:', chordNames.length, 'chords');
 }
