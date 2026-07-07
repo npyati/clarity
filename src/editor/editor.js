@@ -19,23 +19,23 @@ const clarityTheme = EditorView.theme({
   '&': {
     height: '100%',
     backgroundColor: 'transparent',
-    color: '#c5c8c6',
+    color: 'var(--text)',
   },
   '.cm-content': {
-    caretColor: '#5fd3bc',
+    caretColor: 'var(--accent)',
     padding: '20px',
-    fontFamily: "'Hammersmith One', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    fontFamily: 'var(--font-mono)',
   },
-  '.cm-cursor, .cm-dropCursor': { borderLeftColor: '#5fd3bc' },
+  '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)' },
   '&.cm-focused': { outline: 'none' },
   '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
-    backgroundColor: 'rgba(95, 211, 188, 0.18)',
+    backgroundColor: 'var(--accent-soft)',
   },
   '.cm-scroller': { fontFamily: 'inherit', lineHeight: 'inherit' },
   '.cm-gutters': {
     backgroundColor: 'transparent',
     border: 'none',
-    color: '#565a5c',
+    color: 'var(--text-faint)',
   },
 }, { dark: true });
 

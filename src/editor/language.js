@@ -60,13 +60,15 @@ export const clarityLanguage = StreamLanguage.define({
   },
 });
 
-// Tomorrow-Night palette carried over from the block editor
+// Colors come from the design tokens in style.css (CSS variables resolve
+// live inside CodeMirror's generated rules, so theme changes apply
+// without re-configuring the editor)
 export const clarityHighlightStyle = HighlightStyle.define([
-  { tag: t.keyword, color: '#f0c674' },
-  { tag: t.propertyName, color: '#f0c674' },
-  { tag: t.number, color: '#ffa07a' },
-  { tag: t.string, color: '#5fd3bc' },
-  { tag: t.variableName, color: '#81a2be' },
-  { tag: t.comment, color: '#969896' },
-  { tag: t.operator, color: '#c5c8c6' },
+  { tag: t.keyword, color: 'var(--syntax-keyword)' },
+  { tag: t.propertyName, color: 'var(--syntax-keyword)' },
+  { tag: t.number, color: 'var(--syntax-number)' },
+  { tag: t.string, color: 'var(--syntax-string)' },
+  { tag: t.variableName, color: 'var(--syntax-name)' },
+  { tag: t.comment, color: 'var(--syntax-comment)' },
+  { tag: t.operator, color: 'var(--text)' },
 ]);

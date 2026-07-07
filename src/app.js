@@ -198,6 +198,8 @@ function focusedContextForLine(lineNumber) {
   return null;
 }
 
+let lastFocusKey = null;
+
 function updateFocusedPanel() {
   const container = document.getElementById('oscillators-container');
   if (!container || !uiGenerator) return;
@@ -214,6 +216,18 @@ function updateFocusedPanel() {
     uiGenerator.generateUI(container);
   }
   uiGenerator.setUpdatingFromText(false);
+
+  // Pulse the card when the cursor moves focus to a DIFFERENT module —
+  // the visual thread between text and panel (CSS honors reduced-motion)
+  const focusKey = context ? JSON.stringify([context.type, context.componentType || context.triggerType, context.name]) : null;
+  if (focusKey && focusKey !== lastFocusKey && lastFocusKey !== null) {
+    const card = container.querySelector('.module-card');
+    if (card) {
+      card.classList.add('focus-pulse');
+      card.addEventListener('animationend', () => card.classList.remove('focus-pulse'), { once: true });
+    }
+  }
+  lastFocusKey = focusKey;
 }
 
 // ============================================================================
@@ -552,6 +566,12 @@ function createAppEditor(initialDoc) {
 document.addEventListener('DOMContentLoaded', () => {
   try {
     console.log('DOM loaded, initializing...');
+
+    // Explicit theme override (?theme=dark|light) beats the OS preference
+    const themeParam = new URLSearchParams(location.search).get('theme');
+    if (themeParam === 'light' || themeParam === 'dark') {
+      document.documentElement.dataset.theme = themeParam;
+    }
 
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
 

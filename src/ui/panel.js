@@ -110,11 +110,46 @@ class UIGenerator {
   }
 
   /**
+   * a11y: stable control ids so labels are programmatically associated
+   */
+  _controlId(ownerType, ownerName, attrName) {
+    const raw = `ctl-${ownerType}-${ownerName || ''}-${attrName}`;
+    return raw.toLowerCase().replace(/[^a-z0-9-]+/g, '-');
+  }
+
+  /**
+   * Value-fill track: expose the slider position as a CSS custom property
+   * consumed by the track gradient
+   */
+  _applySliderFill(slider) {
+    const min = parseFloat(slider.min) || 0;
+    const max = parseFloat(slider.max) || 100;
+    const value = parseFloat(slider.value) || 0;
+    const pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
+    slider.style.setProperty('--fill', `${Math.max(0, Math.min(100, pct))}%`);
+  }
+
+  _unitFor(attrSchema) {
+    if (attrSchema.unit) return attrSchema.unit;
+    const T = this.schemas.AttributeType;
+    if (attrSchema.type === T.TIME_MS) return 'ms';
+    if (attrSchema.type === T.PERCENTAGE) return '%';
+    if (attrSchema.type === T.FREQUENCY) return 'Hz';
+    return '';
+  }
+
+  _formatValue(value, unit) {
+    if (value === null || value === undefined) return '';
+    if (!unit) return `${value}`;
+    return unit === '%' ? `${value}%` : `${value} ${unit}`;
+  }
+
+  /**
    * Generate UI for a group of variables
    */
   _generateVariableGroup(container, group) {
     const section = document.createElement('div');
-    section.className = 'controls-section';
+    section.className = 'controls-section module-card module-variable';
 
     const header = document.createElement('h2');
     header.textContent = 'variables';
@@ -134,7 +169,7 @@ class UIGenerator {
   _generateSingleVariableControl(container, varName, value, min, max) {
 
     const section = document.createElement('div');
-    section.className = 'controls-section';
+    section.className = 'controls-section module-card module-variable';
 
     const header = document.createElement('h2');
     header.textContent = `variable ${varName}`;
@@ -185,6 +220,11 @@ class UIGenerator {
       }
     }
 
+    const sliderId = this._controlId('variable', varName, 'value');
+    slider.id = sliderId;
+    label.htmlFor = sliderId;
+    this._applySliderFill(slider);
+
     // Create value display
     const valueDisplay = document.createElement('span');
     valueDisplay.className = 'slider-value';
@@ -195,15 +235,19 @@ class UIGenerator {
         const newValue = parseFloat(slider.value);
         // Update value display
         valueDisplay.textContent = newValue;
+        this._applySliderFill(slider);
         // Update just the value, preserve min/max
         this.store.variables.global[varName].value = newValue;
         this._updateTextFromUI('variable', varName, '', newValue);
       }
     });
 
-    controlContainer.appendChild(label);
+    const head = document.createElement('div');
+    head.className = 'control-head';
+    head.appendChild(label);
+    head.appendChild(valueDisplay);
+    controlContainer.appendChild(head);
     controlContainer.appendChild(slider);
-    controlContainer.appendChild(valueDisplay);
     section.appendChild(controlContainer);
     container.appendChild(section);
   }
@@ -218,7 +262,7 @@ class UIGenerator {
     if (Object.keys(masterAttrs).length === 0) return;
 
     const section = document.createElement('div');
-    section.className = 'controls-section';
+    section.className = 'controls-section module-card module-trigger';
     section.id = 'master-section';
 
     const header = document.createElement('h2');
@@ -325,7 +369,7 @@ class UIGenerator {
     // Create a section for each group
     for (const group of groups) {
       const section = document.createElement('div');
-      section.className = 'controls-section';
+      section.className = 'controls-section module-card module-variable';
 
       const header = document.createElement('h2');
       header.textContent = 'variables';
@@ -349,10 +393,13 @@ class UIGenerator {
 
     const label = document.createElement('label');
     label.textContent = name;
+    const sliderId = this._controlId('variable', name, 'value');
+    label.htmlFor = sliderId;
 
     // Create slider
     const slider = document.createElement('input');
     slider.type = 'range';
+    slider.id = sliderId;
     slider.value = value;
 
     // Use custom range if specified, otherwise auto-detect
@@ -389,6 +436,8 @@ class UIGenerator {
       }
     }
 
+    this._applySliderFill(slider);
+
     // Create value display
     const valueDisplay = document.createElement('span');
     valueDisplay.className = 'slider-value';
@@ -399,6 +448,7 @@ class UIGenerator {
         const newValue = parseFloat(slider.value);
         // Update value display
         valueDisplay.textContent = newValue;
+        this._applySliderFill(slider);
         // Update just the value, preserve min/max
         if (typeof this.store.variables.global[name] === 'object') {
           this.store.variables.global[name].value = newValue;
@@ -409,9 +459,12 @@ class UIGenerator {
       }
     });
 
-    sliderContainer.appendChild(label);
+    const head = document.createElement('div');
+    head.className = 'control-head';
+    head.appendChild(label);
+    head.appendChild(valueDisplay);
+    sliderContainer.appendChild(head);
     sliderContainer.appendChild(slider);
-    sliderContainer.appendChild(valueDisplay);
 
     return sliderContainer;
   }
@@ -448,13 +501,19 @@ class UIGenerator {
    * Create a component section
    */
   _createComponentSection(component) {
+    const role = this.schemas.COMPONENT_SCHEMAS?.[component.type]?.role || 'source';
+
     const section = document.createElement('div');
-    section.className = 'controls-section';
+    section.className = `controls-section module-card module-${role}`;
     section.dataset.componentName = component.name;
     section.dataset.componentType = component.type;
 
     const header = document.createElement('h2');
-    header.textContent = `${component.type} ${component.name}`;
+    header.textContent = `${component.type} `;
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'module-name';
+    nameSpan.textContent = component.name;
+    header.appendChild(nameSpan);
     section.appendChild(header);
 
     // Get component schema
@@ -494,7 +553,7 @@ class UIGenerator {
     if (!trigger) return null;
 
     const section = document.createElement('div');
-    section.className = 'controls-section trigger-section';
+    section.className = 'controls-section trigger-section module-card module-trigger';
 
     const header = document.createElement('h2');
     header.textContent = scopeKey;
@@ -568,9 +627,13 @@ class UIGenerator {
     // Create appropriate control based on attribute type
     let control;
 
+    const controlId = this._controlId(ownerType, ownerName, attrName);
+    label.htmlFor = controlId;
+
     if (attrSchema.type === this.schemas.AttributeType.ENUM) {
       // Dropdown
       control = document.createElement('select');
+      control.id = controlId;
       for (const value of attrSchema.values) {
         const option = document.createElement('option');
         option.value = value;
@@ -588,6 +651,7 @@ class UIGenerator {
     } else if (attrSchema.type === this.schemas.AttributeType.COMPONENT_REF) {
       // Component reference dropdown
       control = document.createElement('select');
+      control.id = controlId;
 
       const noneOption = document.createElement('option');
       noneOption.value = '';
@@ -621,10 +685,14 @@ class UIGenerator {
       // Number slider
       control = document.createElement('input');
       control.type = 'range';
+      control.id = controlId;
       control.min = attrSchema.min || 0;
       control.max = attrSchema.max || 100;
       control.step = attrSchema.step || 1;
       control.value = currentValue !== null ? currentValue : (attrSchema.default || 0);
+      this._applySliderFill(control);
+
+      const unit = this._unitFor(attrSchema);
 
       // Create value display
       const valueDisplay = document.createElement('span');
@@ -633,41 +701,42 @@ class UIGenerator {
       // Check if this attribute uses an expression or variable
       const usesExpression = actualValue && typeof actualValue === 'object' && actualValue.type === 'expression';
       if (usesExpression) {
-        valueDisplay.textContent = `${currentValue} (${actualValue.value})`;
-      } else if (usesVariable) {
-        valueDisplay.textContent = currentValue;
+        valueDisplay.textContent = `${this._formatValue(currentValue, unit)} (${actualValue.value})`;
       } else {
-        valueDisplay.textContent = currentValue !== null ? currentValue : (attrSchema.default || 0);
+        valueDisplay.textContent = this._formatValue(
+          currentValue !== null ? currentValue : (attrSchema.default || 0), unit);
       }
 
       if (usesVariable || usesExpression) {
         control.disabled = true;
-        control.style.opacity = '0.5';
       }
 
       control.addEventListener('input', () => {
-        console.log('Slider input event fired for', attrName, 'value:', control.value, 'isUpdatingFromText:', this.isUpdatingFromText);
         if (!this.isUpdatingFromText) {
-          let value = parseFloat(control.value);
-
-          // Update value display
-          valueDisplay.textContent = value;
-
-          // Convert percentage to 0-1 if needed
-          if (attrSchema.type === this.schemas.AttributeType.PERCENTAGE) {
-            // Keep as 0-100 for now, conversion happens in audio engine
-          }
-
-          console.log('Calling onChange with value:', value);
+          const value = parseFloat(control.value);
+          valueDisplay.textContent = this._formatValue(value, unit);
+          this._applySliderFill(control);
           onChange(value);
-        } else {
-          console.warn('Blocked by isUpdatingFromText flag');
         }
       });
 
-      container.appendChild(label);
+      // Double-click resets to the schema default
+      if (!usesVariable && !usesExpression && attrSchema.default !== undefined) {
+        container.addEventListener('dblclick', () => {
+          control.value = attrSchema.default;
+          valueDisplay.textContent = this._formatValue(attrSchema.default, unit);
+          this._applySliderFill(control);
+          onChange(attrSchema.default);
+        });
+        container.title = `double-click resets to ${attrSchema.default}`;
+      }
+
+      const head = document.createElement('div');
+      head.className = 'control-head';
+      head.appendChild(label);
+      head.appendChild(valueDisplay);
+      container.appendChild(head);
       container.appendChild(control);
-      container.appendChild(valueDisplay);
 
       return container;
     }

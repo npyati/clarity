@@ -3,8 +3,16 @@
  * REAL-TIME AUDIO VISUALIZER
  * ============================================================================
  *
- * Displays real-time audio output waveform from the synthesizer
+ * Top half: trigger-synced oscilloscope (locks onto a rising zero-crossing
+ * so periodic waveforms hold still). Bottom half: log-frequency spectrum —
+ * the axis labels are placed by the same mapping that places the bars, so
+ * they are correct by construction.
  */
+import { visualizerPalette, onThemeChange } from './theme.js';
+
+const SPECTRUM_MIN_HZ = 30;
+const SPECTRUM_MAX_HZ = 12000;
+const FREQ_MARKERS = [50, 100, 250, 500, 1000, 2500, 5000, 10000];
 
 class WaveformVisualizer {
   constructor(canvasId, containerId, audioContextGetter) {
@@ -23,15 +31,12 @@ class WaveformVisualizer {
     this.bufferLength = null;
     this.isConnected = false;
 
-    // Colors (matching UI theme)
-    this.colors = {
-      background: '#282a2e',
-      grid: '#373b41',
-      waveform: '#5fd3bc',
-      spectrum: '#81a2be',
-      centerLine: '#969896',
-      label: '#c5c8c6'
-    };
+    // Colors come from the design tokens (single source of truth) and
+    // refresh when the OS theme flips
+    this.colors = visualizerPalette();
+    onThemeChange(() => {
+      this.colors = visualizerPalette();
+    });
 
     // Initialize canvas size
     this.resizeCanvas();
@@ -69,6 +74,24 @@ class WaveformVisualizer {
     this.bufferLength = this.analyser.frequencyBinCount;
     this.dataArray = new Uint8Array(this.bufferLength);
     this.frequencyData = new Uint8Array(this.bufferLength);
+    this.sampleRate = audioContext.sampleRate;
+  }
+
+  /**
+   * Log-frequency x position (0..1) for a frequency in Hz — the ONE
+   * mapping used by both the spectrum bars and the axis labels
+   */
+  _freqToX(freq) {
+    return Math.log(freq / SPECTRUM_MIN_HZ) / Math.log(this._maxFreq() / SPECTRUM_MIN_HZ);
+  }
+
+  _xToFreq(x) {
+    return SPECTRUM_MIN_HZ * Math.pow(this._maxFreq() / SPECTRUM_MIN_HZ, x);
+  }
+
+  _maxFreq() {
+    const nyquist = (this.sampleRate || 48000) / 2;
+    return Math.min(SPECTRUM_MAX_HZ, nyquist);
   }
 
   /**
@@ -194,7 +217,7 @@ class WaveformVisualizer {
   drawGrid() {
     const { ctx, canvasWidth, canvasHeight, colors } = this;
 
-    // Horizontal center line
+    // Divider between waveform and spectrum
     ctx.strokeStyle = colors.centerLine;
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -202,7 +225,7 @@ class WaveformVisualizer {
     ctx.lineTo(canvasWidth, canvasHeight / 2);
     ctx.stroke();
 
-    // Vertical grid lines
+    // Waveform half: time divisions
     ctx.strokeStyle = colors.grid;
     ctx.lineWidth = 0.5;
     const verticalDivisions = 8;
@@ -210,99 +233,128 @@ class WaveformVisualizer {
       const x = (canvasWidth / verticalDivisions) * i;
       ctx.beginPath();
       ctx.moveTo(x, 0);
+      ctx.lineTo(x, canvasHeight / 2);
+      ctx.stroke();
+    }
+
+    // Spectrum half: gridlines at the frequency markers (log axis)
+    for (const freq of FREQ_MARKERS) {
+      const fx = this._freqToX(freq);
+      if (fx <= 0 || fx >= 1) continue;
+      const x = fx * canvasWidth;
+      ctx.beginPath();
+      ctx.moveTo(x, canvasHeight / 2);
       ctx.lineTo(x, canvasHeight);
       ctx.stroke();
     }
   }
 
   /**
-   * Draw section labels
+   * Draw section labels + frequency axis
    */
   drawLabels() {
     const { ctx, canvasWidth, canvasHeight, colors } = this;
 
     ctx.fillStyle = colors.label;
-    ctx.font = '10px monospace';
+    ctx.font = '10px "JetBrains Mono", monospace';
     ctx.textAlign = 'left';
 
-    // Waveform label
     ctx.fillText('WAVEFORM', 8, 15);
-
-    // Spectrum label
     ctx.fillText('SPECTRUM', 8, canvasHeight / 2 + 15);
 
-    // Frequency markers for spectrum
-    const spectrumTop = canvasHeight / 2;
+    // Frequency labels sit exactly on the log-axis gridlines
     const markerY = canvasHeight - 5;
-
     ctx.textAlign = 'center';
-    ctx.fillText('20Hz', canvasWidth * 0.02, markerY);
-    ctx.fillText('100Hz', canvasWidth * 0.15, markerY);
-    ctx.fillText('500Hz', canvasWidth * 0.4, markerY);
-    ctx.fillText('1kHz', canvasWidth * 0.6, markerY);
-    ctx.fillText('5kHz', canvasWidth * 0.85, markerY);
+    for (const freq of FREQ_MARKERS) {
+      const fx = this._freqToX(freq);
+      if (fx <= 0.02 || fx >= 0.98) continue;
+      const text = freq >= 1000 ? `${freq / 1000}k` : `${freq}`;
+      ctx.fillText(text, fx * canvasWidth, markerY);
+    }
   }
 
   /**
-   * Draw real-time waveform from audio data (top half)
+   * Find a stable start index: first rising crossing of the midpoint in
+   * the first half of the buffer. Locks periodic waveforms in place.
+   */
+  _triggerIndex() {
+    const { dataArray, bufferLength } = this;
+    const half = Math.floor(bufferLength / 2);
+    for (let i = 1; i < half; i++) {
+      if (dataArray[i - 1] < 128 && dataArray[i] >= 128) {
+        return i;
+      }
+    }
+    return 0; // no crossing (silence/DC) — draw from the start
+  }
+
+  /**
+   * Draw trigger-synced waveform (top half)
    */
   drawWaveform() {
     const { ctx, canvasWidth, canvasHeight, colors, dataArray, bufferLength } = this;
 
     const waveformHeight = canvasHeight / 2;
-    const centerY = waveformHeight / 2;
+    const start = this._triggerIndex();
+    const windowLength = Math.floor(bufferLength / 2);
 
+    ctx.save();
     ctx.lineWidth = 1.5;
     ctx.strokeStyle = colors.waveform;
+    ctx.shadowColor = colors.waveform;
+    ctx.shadowBlur = 6;
     ctx.beginPath();
 
-    const sliceWidth = canvasWidth / bufferLength;
-    let x = 0;
-
-    for (let i = 0; i < bufferLength; i++) {
-      const v = dataArray[i] / 128.0; // Normalize to 0-2
+    const sliceWidth = canvasWidth / windowLength;
+    for (let i = 0; i < windowLength; i++) {
+      const v = dataArray[start + i] / 128.0; // Normalize to 0-2
       const y = (v * waveformHeight) / 2;
-
       if (i === 0) {
-        ctx.moveTo(x, y);
+        ctx.moveTo(0, y);
       } else {
-        ctx.lineTo(x, y);
+        ctx.lineTo(i * sliceWidth, y);
       }
-
-      x += sliceWidth;
     }
 
-    ctx.lineTo(canvasWidth, centerY);
     ctx.stroke();
+    ctx.restore();
   }
 
   /**
-   * Draw frequency spectrum (bottom half)
+   * Draw log-frequency spectrum (bottom half)
    */
   drawSpectrum() {
     const { ctx, canvasWidth, canvasHeight, colors, frequencyData, bufferLength } = this;
 
     const spectrumHeight = canvasHeight / 2;
     const spectrumTop = canvasHeight / 2;
+    const nyquist = (this.sampleRate || 48000) / 2;
+    const binWidthHz = nyquist / bufferLength;
 
-    // Only show lower frequencies (more musically relevant)
-    const maxFreqBin = Math.floor(bufferLength / 4);
-    const barWidth = canvasWidth / maxFreqBin;
+    // One vertical gradient for all bars: accent fading down
+    const gradient = ctx.createLinearGradient(0, spectrumTop, 0, canvasHeight);
+    gradient.addColorStop(0, colors.spectrum);
+    gradient.addColorStop(1, colors.grid);
+    ctx.fillStyle = gradient;
 
-    for (let i = 0; i < maxFreqBin; i++) {
-      const barHeight = (frequencyData[i] / 255.0) * spectrumHeight;
+    // Walk pixel columns; each column covers a log-frequency span and
+    // shows the loudest bin inside it
+    const step = 2;
+    for (let px = 0; px < canvasWidth; px += step) {
+      const f0 = this._xToFreq(px / canvasWidth);
+      const f1 = this._xToFreq(Math.min(1, (px + step) / canvasWidth));
+      const bin0 = Math.max(0, Math.floor(f0 / binWidthHz));
+      const bin1 = Math.min(bufferLength - 1, Math.max(bin0, Math.ceil(f1 / binWidthHz)));
 
-      // Brighter color gradient from cyan to blue based on frequency
-      const hue = 180 + (i / maxFreqBin) * 30; // 180 (cyan) to 210 (blue)
-      const saturation = 70;
-      const lightness = 55 + (barHeight / spectrumHeight) * 20; // Brighter when louder
-      ctx.fillStyle = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+      let peak = 0;
+      for (let b = bin0; b <= bin1; b++) {
+        if (frequencyData[b] > peak) peak = frequencyData[b];
+      }
 
-      const x = i * barWidth;
-      const y = spectrumTop + (spectrumHeight - barHeight);
-
-      // Draw bars with minimal gap for better visibility
-      ctx.fillRect(x, y, barWidth - 0.5, barHeight);
+      const barHeight = (peak / 255) * (spectrumHeight - 18);
+      if (barHeight > 0.5) {
+        ctx.fillRect(px, spectrumTop + (spectrumHeight - barHeight), step - 0.5, barHeight);
+      }
     }
   }
 }

@@ -19,5 +19,8 @@
     "@lezer/highlight": "^1.2.3",
     "vite": "^6.0.0",
     "vitest": "^3.0.0"
+  },
+  "dependencies": {
+    "@fontsource/jetbrains-mono": "^5.2.8"
   }
 }
