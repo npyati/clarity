@@ -137,98 +137,84 @@ let isUpdatingFromText = false;
 let lastUIUpdateTime = 0; // Timestamp of last UI control change
 
 // ============================================================================
-// NEW SYNC FUNCTION - Uses parser + UI generator
+// PARSE/APPLY PIPELINE
 // ============================================================================
+// Editor-agnostic seam: the editor (blocks today, CodeMirror later) calls
+// scheduleSync() on text changes. Parsing and applying stay distinct so a
+// future transport can quantize the apply step.
+
+const SYNC_DEBOUNCE_MS = 60;
+let syncTimer = null;
+
+// Debounced full sync — coalesces rapid keystrokes into one parse + apply
+function scheduleSync() {
+  if (syncTimer) clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => {
+    syncTimer = null;
+    syncUIFromText();
+  }, SYNC_DEBOUNCE_MS);
+}
+
+// Apply a parse result to the UI and audio engine
+function applyParseResult(result, { rebuildUI = true } = {}) {
+  if (!result.success) {
+    console.error('Parse errors:', result.errors);
+    // Still continue to show UI even with errors
+  }
+  if (result.warnings.length > 0) {
+    console.warn('Parse warnings:', result.warnings);
+  }
+
+  if (rebuildUI) {
+    updateUIForCurrentBlock();
+  }
+
+  if (audioEngine) {
+    const masterRebuilt = audioEngine.initializeMaster();
+
+    // Reconnect the visualizer only when the master chain was actually
+    // torn down — a values-only edit must not churn nodes mid-note
+    if (masterRebuilt && waveformVisualizer && audioEngine.audioContext.state === 'running') {
+      waveformVisualizer.isConnected = false;
+      waveformVisualizer.ensureConnected();
+    }
+  }
+}
+
 // Sync just the store and audio engine from text (no UI rebuild)
 // Used for value changes where UI structure doesn't change
 function syncStoreFromText() {
-  // Check if systems are initialized
   if (!parser) {
     console.warn('Parser not initialized yet');
     return;
   }
 
-  const text = getAllBlocksText();
-
-  // Set flag to prevent circular updates
   isUpdatingFromText = true;
-
   try {
-    // Parse document with new parser to update instance store
-    const result = parser.parse(text);
-
-    if (!result.success) {
-      console.error('Parse errors:', result.errors);
-    }
-
-    if (result.warnings.length > 0) {
-      console.warn('Parse warnings:', result.warnings);
-    }
-
-    // Update audio engine master chain
-    if (audioEngine) {
-      audioEngine.initializeMaster();
-
-      // Reconnect visualizer since master was reinitialized
-      if (waveformVisualizer && audioEngine.audioContext.state === 'running') {
-        waveformVisualizer.isConnected = false; // Reset connection flag
-        waveformVisualizer.ensureConnected();
-      }
-    }
+    applyParseResult(parser.parse(getAllBlocksText()), { rebuildUI: false });
   } catch (error) {
     console.error('Error in syncStoreFromText:', error);
+  } finally {
+    isUpdatingFromText = false;
   }
-
-  // Clear flag
-  isUpdatingFromText = false;
 }
 
 // Sync UI, store, and audio engine from text (full rebuild)
 // Used for structural changes like adding/removing components
 function syncUIFromText() {
-  // Check if systems are initialized
   if (!parser || !uiGenerator) {
     console.warn('Parser or UI generator not initialized yet');
     return;
   }
 
-  const text = getAllBlocksText();
-
-  // Set flag to prevent circular updates
   isUpdatingFromText = true;
-
   try {
-    // Parse document with new parser
-    const result = parser.parse(text);
-
-    if (!result.success) {
-      console.error('Parse errors:', result.errors);
-      // Still continue to show UI even with errors
-    }
-
-    if (result.warnings.length > 0) {
-      console.warn('Parse warnings:', result.warnings);
-    }
-
-    // Generate UI from instance store
-    updateUIForCurrentBlock();
-
-    // Update audio engine master chain
-    if (audioEngine) {
-      audioEngine.initializeMaster();
-
-      // Reconnect visualizer since master was reinitialized
-      if (waveformVisualizer && audioEngine.audioContext.state === 'running') {
-        waveformVisualizer.isConnected = false; // Reset connection flag
-        waveformVisualizer.ensureConnected();
-      }
-    }
+    applyParseResult(parser.parse(getAllBlocksText()), { rebuildUI: true });
   } catch (error) {
     console.error('Error in syncUIFromText:', error);
+  } finally {
+    isUpdatingFromText = false;
   }
-
-  // Clear flag
-  isUpdatingFromText = false;
 }
 
 // Update UI - shows controls for current block only (focused mode)
@@ -1329,8 +1315,8 @@ function performIncrementInBlock(contentEl, direction, shiftKey) {
     // Update the block content
     contentEl.textContent = newText;
 
-    // Sync UI from all blocks
-    syncUIFromText();
+    // Sync UI from all blocks (debounced — increments can key-repeat)
+    scheduleSync();
 
     // Format this block
     formatBlock(block);
@@ -1370,7 +1356,7 @@ function performIncrementInBlock(contentEl, direction, shiftKey) {
                     text.substring(numberInfo.end);
 
     contentEl.textContent = newText;
-    syncUIFromText();
+    scheduleSync();
     formatBlock(block);
     setCursorPositionInBlock(contentEl, numberInfo.start + String(newValue).length);
     return;
@@ -1425,8 +1411,8 @@ function performIncrementInBlock(contentEl, direction, shiftKey) {
   // Update the block content
   contentEl.textContent = newText;
 
-  // Sync UI from all blocks
-  syncUIFromText();
+  // Sync UI from all blocks (debounced — increments can key-repeat)
+  scheduleSync();
 
   // Format this block
   formatBlock(block);
@@ -1840,8 +1826,8 @@ parametersTextbox.addEventListener("input", () => {
   // Format the current block (this preserves cursor position)
   formatBlock(block);
 
-  // Sync the UI
-  syncUIFromText();
+  // Sync the UI (debounced — typing must not re-parse per keystroke)
+  scheduleSync();
 
   // Scroll to and pulse the corresponding control in the pane
   scrollToPaneControl(blockContent);
@@ -2035,8 +2021,8 @@ parametersTextbox.addEventListener("keydown", (e) => {
       const newCursorPos = Math.max(0, cursorPos - 2);
       setCursorPositionInBlock(blockContent, newCursorPos);
 
-      // Sync UI from all blocks
-      syncUIFromText();
+      // Sync UI from all blocks (debounced — Tab can key-repeat)
+      scheduleSync();
     }
   } else {
     // Tab: Indent (add 2 spaces to beginning)
@@ -2047,8 +2033,8 @@ parametersTextbox.addEventListener("keydown", (e) => {
     // Adjust cursor position (move forward by 2)
     setCursorPositionInBlock(blockContent, cursorPos + 2);
 
-    // Sync UI from all blocks
-    syncUIFromText();
+    // Sync UI from all blocks (debounced — increments can key-repeat)
+    scheduleSync();
   }
 
   // Reset flag

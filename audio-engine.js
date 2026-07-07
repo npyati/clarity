@@ -156,10 +156,9 @@ class AudioEngine {
       this._smoothSet(this.masterGain.gain, gainTarget);
     }
 
-    // Return the input node (last in chain)
-    if (this.masterCompressor) return this.masterCompressor;
-    if (this.masterFilter) return this.masterFilter;
-    return this.masterGain;
+    // Report whether the chain was torn down and rebuilt so callers can
+    // skip work (e.g. visualizer reconnection) on values-only updates
+    return structureChanged;
   }
 
   /**
