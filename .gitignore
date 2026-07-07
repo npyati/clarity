@@ -4,3 +4,4 @@ thesis/
 
 # Exclude system files
 .DS_Store
+clarity.code-workspace
