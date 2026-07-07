@@ -29,3 +29,4 @@ const variable_names = [
   "redstart", "sparrow", "turmeric", "upstream", "vetch", "woodpecker", "yarrow", "agate", "bluebell", "cyclone",
   "dune", "estuary", "fjord", "geode", "highland", "inlet", "juniper", "kettle", "limestone", "monsoon"
 ];
+export { variable_names };

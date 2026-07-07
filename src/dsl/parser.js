@@ -1,3 +1,5 @@
+import { AttributeType, ComponentRole, COMPONENT_SCHEMAS, TRIGGER_SCHEMAS, SchemaUtils } from './schemas.js';
+import { instanceStore } from './instance-store.js';
 /**
  * ============================================================================
  * GENERIC PARSER
@@ -984,3 +986,5 @@ function initializeParser() {
 
   console.log('Parser initialized');
 }
+
+export { ExpressionEvaluator, Parser, parser, initializeParser };

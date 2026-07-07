@@ -4,9 +4,16 @@ A text-based polyphonic synthesizer for the browser. Define your instrument by e
 
 ## Quick Start
 
-1. Open `index.html` in a web browser
-2. Edit the text in the left pane to configure your synthesizer
-3. Use controls in the right pane or play with your keyboard
+1. `npm install` (first time only), then `npm run dev`
+2. Open the printed local URL in a web browser
+3. Edit the text in the left pane to configure your synthesizer
+4. Use controls in the right pane or play with your keyboard
+
+Your document autosaves to the browser and is restored on reload. Use the
+`/` command palette's "Reset to Seed Document" to start over.
+
+To build the deployable static site: `npm run build` (output in `dist/`).
+Tests: `npm test`.
 
 ## Text Syntax
 

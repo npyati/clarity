@@ -65,3 +65,5 @@ const CHORD_DEFINITIONS = [
     "semitones": [0, 4, 7, 11, 14]
   }
 ];
+
+export { CHORD_DEFINITIONS };

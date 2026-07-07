@@ -698,3 +698,5 @@ class InstanceStore {
 
 // Create global instance
 const instanceStore = new InstanceStore();
+
+export { ScopeType, InstanceStore, instanceStore };

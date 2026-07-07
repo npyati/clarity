@@ -323,3 +323,5 @@ function initializeVisualizer() {
 
   console.log('Waveform visualizer initialized');
 }
+
+export { WaveformVisualizer, waveformVisualizer, initializeVisualizer };

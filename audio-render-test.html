@@ -4,13 +4,15 @@
 <html>
 <head><meta charset="UTF-8"><title>audio render test</title></head>
 <body>
-<script src="chords.js"></script>
-<script src="variables.js"></script>
-<script src="schemas.js"></script>
-<script src="instance-store.js"></script>
-<script src="parser.js"></script>
-<script src="audio-engine.js"></script>
-<script>
+<script type="module">
+import {
+  AttributeType, COMPONENT_SCHEMAS, TRIGGER_SCHEMAS, SchemaUtils,
+  initializeChordValues,
+} from './src/dsl/schemas.js';
+import { parser, initializeParser } from './src/dsl/parser.js';
+import { instanceStore } from './src/dsl/instance-store.js';
+import { AudioEngine } from './src/engine/audio-engine.js';
+
 const DEFAULT_SEED = [
   'variable vibrato_depth = 20',
   'variable vibrato_rate = 5',

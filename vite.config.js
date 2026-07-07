@@ -1,0 +1,7 @@
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  // Relative base so the build works on GitHub Pages project sites
+  // and when opened from any subpath
+  base: './',
+});

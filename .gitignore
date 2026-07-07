@@ -5,3 +5,7 @@ thesis/
 # Exclude system files
 .DS_Store
 clarity.code-workspace
+
+# Build/deps
+node_modules/
+dist/

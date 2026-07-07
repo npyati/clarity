@@ -1,3 +1,4 @@
+import { CHORD_DEFINITIONS } from './chords.js';
 /**
  * ============================================================================
  * COMPONENT AND ATTRIBUTE SCHEMAS
@@ -674,3 +675,5 @@ function initializeChordValues() {
 
   console.log('Chord values initialized:', chordNames.length, 'chords');
 }
+
+export { AttributeType, ComponentRole, COMPONENT_SCHEMAS, TRIGGER_SCHEMAS, SchemaUtils, initializeChordValues };

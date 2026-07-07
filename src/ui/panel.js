@@ -1,3 +1,5 @@
+import { AttributeType, COMPONENT_SCHEMAS, TRIGGER_SCHEMAS, SchemaUtils } from '../dsl/schemas.js';
+import { instanceStore } from '../dsl/instance-store.js';
 /**
  * ============================================================================
  * GENERIC UI GENERATOR
@@ -764,3 +766,5 @@ function initializeUIGenerator() {
 
   console.log('UI generator initialized');
 }
+
+export { UIGenerator, uiGenerator, initializeUIGenerator };

@@ -1,3 +1,11 @@
+import { CHORD_DEFINITIONS } from './dsl/chords.js';
+import { variable_names } from './dsl/name-pool.js';
+import { COMPONENT_SCHEMAS, TRIGGER_SCHEMAS, initializeChordValues } from './dsl/schemas.js';
+import { instanceStore } from './dsl/instance-store.js';
+import { parser, initializeParser } from './dsl/parser.js';
+import { uiGenerator, initializeUIGenerator } from './ui/panel.js';
+import { waveformVisualizer, initializeVisualizer } from './ui/visualizer.js';
+import { audioEngine, initializeAudioEngine } from './engine/audio-engine.js';
 /*
  * ============================================================================
  * DESIGN PRINCIPLES - INSTRUCTIONS FOR CLAUDE

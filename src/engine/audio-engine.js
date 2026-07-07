@@ -1,3 +1,6 @@
+import { AttributeType, COMPONENT_SCHEMAS, TRIGGER_SCHEMAS, SchemaUtils } from '../dsl/schemas.js';
+import { ExpressionEvaluator } from '../dsl/parser.js';
+import { instanceStore } from '../dsl/instance-store.js';
 /**
  * ============================================================================
  * GENERIC AUDIO ENGINE
@@ -851,3 +854,5 @@ function initializeAudioEngine(audioContext) {
 
   console.log('Audio engine initialized and assigned to window.audioEngine');
 }
+
+export { AudioEngine, audioEngine, initializeAudioEngine, cancelAndHold, getSharedNoiseBuffer };
