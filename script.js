@@ -155,6 +155,35 @@ function scheduleSync() {
   }, SYNC_DEBOUNCE_MS);
 }
 
+// Surface parse errors in the UI: status strip + per-block markers
+function updateParseStatus(result) {
+  const statusEl = document.getElementById('parse-status');
+  const blocks = parametersTextbox
+    ? Array.from(parametersTextbox.querySelectorAll('.block'))
+    : [];
+
+  blocks.forEach(b => b.classList.remove('parse-error'));
+
+  const errors = result.errors || [];
+  if (statusEl) {
+    if (errors.length === 0) {
+      statusEl.classList.add('hidden');
+      statusEl.textContent = '';
+    } else {
+      statusEl.classList.remove('hidden');
+      const shown = errors.slice(0, 3).map(e => `line ${e.line}: ${e.message}`);
+      const more = errors.length > 3 ? `  (+${errors.length - 3} more)` : '';
+      statusEl.textContent = shown.join('   ·   ') + more;
+    }
+  }
+
+  // Blocks are one per line, so error.line maps directly to a block
+  for (const err of errors) {
+    const block = blocks[err.line - 1];
+    if (block) block.classList.add('parse-error');
+  }
+}
+
 // Apply a parse result to the UI and audio engine
 function applyParseResult(result, { rebuildUI = true } = {}) {
   if (!result.success) {
@@ -164,6 +193,8 @@ function applyParseResult(result, { rebuildUI = true } = {}) {
   if (result.warnings.length > 0) {
     console.warn('Parse warnings:', result.warnings);
   }
+
+  updateParseStatus(result);
 
   if (rebuildUI) {
     updateUIForCurrentBlock();
@@ -191,7 +222,9 @@ function syncStoreFromText() {
 
   isUpdatingFromText = true;
   try {
-    applyParseResult(parser.parse(getAllBlocksText()), { rebuildUI: false });
+    const text = getAllBlocksText();
+    autosaveDocument(text);
+    applyParseResult(parser.parse(text), { rebuildUI: false });
   } catch (error) {
     console.error('Error in syncStoreFromText:', error);
   } finally {
@@ -209,7 +242,9 @@ function syncUIFromText() {
 
   isUpdatingFromText = true;
   try {
-    applyParseResult(parser.parse(getAllBlocksText()), { rebuildUI: true });
+    const text = getAllBlocksText();
+    autosaveDocument(text);
+    applyParseResult(parser.parse(text), { rebuildUI: true });
   } catch (error) {
     console.error('Error in syncUIFromText:', error);
   } finally {
@@ -1024,60 +1059,83 @@ function focusBlock(blockElement, atEnd = false) {
 }
 
 // Initialize blocks with default content
-function initializeBlocks() {
-  const initialLines = [];
-
-  // Vibrato controls
-  initialLines.push('variable vibrato_depth = 20');
-  initialLines.push('variable vibrato_rate = 5');
-  initialLines.push('');
-
-  // Volume controls
-  initialLines.push('variable lead_volume = 60');
-  initialLines.push('variable bass_volume = 40');
-  initialLines.push('');
-
-  // Lead oscillator with LFO modulation
-  initialLines.push('oscillator lead');
-  initialLines.push('  wave triangle');
-  initialLines.push('  octave 0');
-  initialLines.push('  volume lead_volume');
-  initialLines.push('  pitch 0');
-  initialLines.push('    modulation vibrato');
-  initialLines.push('');
-
-  // Bass oscillator
-  initialLines.push('oscillator bass');
-  initialLines.push('  wave sine');
-  initialLines.push('  octave -1');
-  initialLines.push('  volume bass_volume');
-  initialLines.push('');
-
+// Seed document — also serves as the smoke-test fixture
+// (note-specific overrides are not working yet in the parser;
+// will return as: note c4 with variable vibrato_depth = 40)
+const SEED_DOCUMENT_LINES = [
+  'variable vibrato_depth = 20',
+  'variable vibrato_rate = 5',
+  '',
+  'variable lead_volume = 60',
+  'variable bass_volume = 40',
+  '',
+  'oscillator lead',
+  '  wave triangle',
+  '  octave 0',
+  '  volume lead_volume',
+  '  pitch 0',
+  '    modulation vibrato',
+  '',
+  'oscillator bass',
+  '  wave sine',
+  '  octave -1',
+  '  volume bass_volume',
+  '',
   // LFO for vibrato (order doesn't matter - parser handles forward references)
-  initialLines.push('lfo vibrato');
-  initialLines.push('  rate vibrato_rate + 2');
-  initialLines.push('  depth vibrato_depth * 0.5');
-  initialLines.push('  wave sine');
-  initialLines.push('');
+  'lfo vibrato',
+  '  rate vibrato_rate + 2',
+  '  depth vibrato_depth * 0.5',
+  '  wave sine',
+  '',
+  'master',
+  '  volume 80',
+  '  attack 10',
+  '  sustain 100',
+  '  release 500',
+  '',
+];
 
-  // Master section
-  initialLines.push('master');
-  initialLines.push('  volume 80');
-  initialLines.push('  attack 10');
-  initialLines.push('  sustain 100');
-  initialLines.push('  release 500');
-  initialLines.push('');
+const DOC_STORAGE_KEY = 'clarity.doc';
 
-  // Note: note-specific overrides are not working yet in the parser
-  // Will be fixed later: note c4 with variable vibrato_depth = 40
+// Autosave is best-effort; the text itself is the source of truth, so a
+// restored document with errors is shown with inline markers, never discarded
+function autosaveDocument(text) {
+  try {
+    localStorage.setItem(DOC_STORAGE_KEY, JSON.stringify({
+      version: 1,
+      text,
+      savedAt: Date.now(),
+    }));
+  } catch (e) {
+    // Storage full or denied — keep playing without persistence
+  }
+}
 
+function loadSavedDocument() {
+  try {
+    const raw = localStorage.getItem(DOC_STORAGE_KEY);
+    if (!raw) return null;
+    const saved = JSON.parse(raw);
+    return typeof saved.text === 'string' ? saved.text : null;
+  } catch (e) {
+    console.warn('Saved document unreadable, starting from seed:', e);
+    return null;
+  }
+}
+
+function buildBlocksFromLines(lines) {
   parametersTextbox.contentEditable = 'true';
   parametersTextbox.innerHTML = '';
-  initialLines.forEach(line => {
+  lines.forEach(line => {
     const block = createBlock(line);
     parametersTextbox.appendChild(block);
     formatBlock(block);
   });
+}
+
+function initializeBlocks() {
+  const saved = loadSavedDocument();
+  buildBlocksFromLines(saved !== null ? saved.split('\n') : SEED_DOCUMENT_LINES);
 }
 
 // Update a specific parameter by finding and updating its block
@@ -2953,6 +3011,19 @@ const commands = [
       // Position cursor at the filter header
       const filterContent = filterHeaderBlock.querySelector('.block-content');
       setCursorToEnd(filterContent);
+    }
+  },
+  {
+    name: "Reset to Seed Document",
+    description: "Discard the saved document and restore the built-in example",
+    action: () => {
+      try {
+        localStorage.removeItem(DOC_STORAGE_KEY);
+      } catch (e) {
+        // Storage denied — still rebuild from seed
+      }
+      buildBlocksFromLines(SEED_DOCUMENT_LINES);
+      syncUIFromText();
     }
   },
   {

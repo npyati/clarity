@@ -47,6 +47,28 @@ body {
   overflow: auto;
 }
 
+/* Parse error surfacing */
+#parse-status {
+  padding: 8px 20px;
+  background: #1d1f21;
+  border-top: 1px solid #161719;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #ff8c66;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#parse-status.hidden {
+  display: none;
+}
+
+.block.parse-error {
+  box-shadow: inset 2px 0 0 #ff8c66;
+  background: rgba(255, 140, 102, 0.07);
+}
+
 /* Block structure */
 .block {
   min-height: 1.6em;
