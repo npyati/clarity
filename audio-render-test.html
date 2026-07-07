@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<!-- Temporary offline-render harness for envelope click verification.
+     Run headless; results are printed via console.log as JSON. -->
+<html>
+<head><meta charset="UTF-8"><title>audio render test</title></head>
+<body>
+<script src="chords.js"></script>
+<script src="variables.js"></script>
+<script src="schemas.js"></script>
+<script src="instance-store.js"></script>
+<script src="parser.js"></script>
+<script src="audio-engine.js"></script>
+<script>
+const DEFAULT_SEED = [
+  'variable vibrato_depth = 20',
+  'variable vibrato_rate = 5',
+  'variable lead_volume = 60',
+  'variable bass_volume = 40',
+  '',
+  'oscillator lead',
+  '  wave triangle',
+  '  octave 0',
+  '  volume lead_volume',
+  '  pitch 0',
+  '    modulation vibrato',
+  '',
+  'oscillator bass',
+  '  wave sine',
+  '  octave -1',
+  '  volume bass_volume',
+  '',
+  'lfo vibrato',
+  '  rate vibrato_rate + 2',
+  '  depth vibrato_depth * 0.5',
+  '  wave sine',
+  '',
+  'master',
+  '  volume 80',
+  '  attack 10',
+  '  sustain 100',
+  '  release 500',
+].join('\n');
+
+const SEED = location.hash.length > 1
+  ? decodeURIComponent(location.hash.slice(1))
+  : DEFAULT_SEED;
+
+async function run() {
+  const sampleRate = 48000;
+  const duration = 1.5;
+  const offline = new OfflineAudioContext(1, duration * sampleRate, sampleRate);
+
+  initializeChordValues();
+  initializeParser();
+  const result = parser.parse(SEED);
+
+  const engine = new AudioEngine(offline, instanceStore, {
+    AttributeType, COMPONENT_SCHEMAS, TRIGGER_SCHEMAS, SchemaUtils
+  });
+  engine.initializeMaster();
+
+  const note = engine.createNote('c4', 261.63);
+
+  // Release the note mid-render
+  const releaseAt = 0.5;
+  offline.suspend(releaseAt).then(() => {
+    note.stop();
+    offline.resume();
+  });
+
+  const buffer = await offline.startRendering();
+  const data = buffer.getChannelData(0);
+
+  let nan = 0, peak = 0;
+  let maxDeltaAttack = 0, maxDeltaRelease = 0, maxDeltaAll = 0, argmax = 0;
+  const releaseIdx = Math.floor(releaseAt * sampleRate);
+  for (let i = 1; i < data.length; i++) {
+    const v = data[i];
+    if (Number.isNaN(v)) nan++;
+    const a = Math.abs(v);
+    if (a > peak) peak = a;
+    const d = Math.abs(v - data[i - 1]);
+    if (d > maxDeltaAll) { maxDeltaAll = d; argmax = i; }
+    if (i < releaseIdx && d > maxDeltaAttack) maxDeltaAttack = d;
+    if (i >= releaseIdx && d > maxDeltaRelease) maxDeltaRelease = d;
+  }
+  const around = [];
+  for (let i = Math.max(0, argmax - 3); i < Math.min(data.length, argmax + 3); i++) {
+    around.push(+data[i].toFixed(4));
+  }
+  // RMS of the last 50ms — should be ~0 (fully released)
+  let tailSum = 0;
+  const tailStart = data.length - Math.floor(0.05 * sampleRate);
+  for (let i = tailStart; i < data.length; i++) tailSum += data[i] * data[i];
+  const tailRms = Math.sqrt(tailSum / (data.length - tailStart));
+
+  console.log('RENDER_RESULT ' + JSON.stringify({
+    parseErrors: result.errors.length,
+    nan, peak: +peak.toFixed(4),
+    maxDeltaAttack: +maxDeltaAttack.toFixed(4),
+    maxDeltaRelease: +maxDeltaRelease.toFixed(4),
+    maxDeltaAll: +maxDeltaAll.toFixed(4),
+    argmaxTime: +(argmax / sampleRate).toFixed(5),
+    around,
+    tailRms: +tailRms.toFixed(6),
+  }));
+}
+run().catch(e => console.log('RENDER_RESULT ' + JSON.stringify({ fatal: String(e) })));
+</script>
+</body>
+</html>

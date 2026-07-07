@@ -8,6 +8,65 @@
  */
 
 /**
+ * Hold an AudioParam at its current automation value and cancel what's
+ * scheduled after `time`. Prevents the jump-then-ramp release click.
+ */
+function cancelAndHold(param, time) {
+  if (typeof param.cancelAndHoldAtTime === 'function') {
+    param.cancelAndHoldAtTime(time); // truncates any in-flight ramp at `time`
+  } else {
+    // Firefox lacks cancelAndHoldAtTime; cancelScheduledValues alone may
+    // snap the param back to its pre-ramp value. Exact segment-based
+    // fallback arrives with the Phase D engine rewrite.
+    param.cancelScheduledValues(time);
+  }
+  // Anchor an explicit event at `time`. Without it, a following
+  // linearRampToValueAtTime ramps from the PREVIOUS event — potentially a
+  // long-finished attack ramp — so the param instantly jumps to a
+  // mid-interpolated value (an audible click). Reading .value here is safe
+  // because callers pass time === currentTime.
+  param.setValueAtTime(param.value, time);
+}
+
+/**
+ * One shared smooth-noise buffer per AudioContext. The buffer wiggles at
+ * NOISE_BASE_RATE Hz so playbackRate maps 1:1 to the requested rate.
+ * (Previously ~1.9 MB was allocated per note per noise modulation.)
+ */
+const NOISE_BASE_RATE = 1;
+const _noiseBuffers = new WeakMap();
+
+function getSharedNoiseBuffer(audioContext) {
+  let buffer = _noiseBuffers.get(audioContext);
+  if (buffer) return buffer;
+
+  const duration = 10;
+  const sampleRate = audioContext.sampleRate;
+  const size = duration * sampleRate;
+  buffer = audioContext.createBuffer(1, size, sampleRate);
+  const data = buffer.getChannelData(0);
+
+  // Smooth random walk: interpolated control points, 4 per base-rate cycle
+  const interval = Math.floor(sampleRate / (NOISE_BASE_RATE * 4));
+  let last = Math.random() * 2 - 1;
+  let next = Math.random() * 2 - 1;
+  let cp = 0;
+  for (let i = 0; i < size; i++) {
+    if (i >= (cp + 1) * interval) {
+      cp++;
+      last = next;
+      next = Math.random() * 2 - 1;
+    }
+    const t = (i - cp * interval) / interval;
+    const smoothT = t * t * (3 - 2 * t);
+    data[i] = last + (next - last) * smoothT;
+  }
+
+  _noiseBuffers.set(audioContext, buffer);
+  return buffer;
+}
+
+/**
  * Audio Engine class
  */
 class AudioEngine {
@@ -90,7 +149,12 @@ class AudioEngine {
 
     // Always update volume (whether structure changed or not)
     const volumePercent = this._resolveNumeric(masterVolumeAttr, 80);
-    this.masterGain.gain.value = Math.max(0, Math.min(1, volumePercent / 100));
+    const gainTarget = Math.max(0, Math.min(1, volumePercent / 100));
+    if (structureChanged) {
+      this.masterGain.gain.value = gainTarget; // fresh node — set directly
+    } else {
+      this._smoothSet(this.masterGain.gain, gainTarget);
+    }
 
     // Return the input node (last in chain)
     if (this.masterCompressor) return this.masterCompressor;
@@ -247,6 +311,16 @@ class AudioEngine {
   }
 
   /**
+   * Smoothly move a live AudioParam to a new value (avoids zipper noise
+   * from direct .value assignment while audio is running)
+   */
+  _smoothSet(param, value, timeConstant = 0.02) {
+    const now = this.audioContext.currentTime;
+    cancelAndHold(param, now);
+    param.setTargetAtTime(value, now, timeConstant);
+  }
+
+  /**
    * Resolve an attribute value to a finite number, following variable
    * references and expressions; returns fallback if resolution fails.
    * Accepts raw values, { value, modulation } wrappers, variable_ref
@@ -268,6 +342,7 @@ class AudioEngine {
       });
     }
     if (v && typeof v === 'object' && 'value' in v) v = v.value;
+    if (v === null || v === undefined || v === '') return fallback;
     const n = Number(v);
     return Number.isFinite(n) ? n : fallback;
   }
@@ -480,9 +555,14 @@ class NoteInstance {
     const releaseTime = (release.value || 500) / 1000;
 
     const now = this.audioContext.currentTime;
+    // Gain staging: this per-oscillator stage owns absolute LEVEL
+    // (volume x attack/sustain/release; the schema has no per-osc decay,
+    // so peak == sustain). The master noteGain stage owns SHAPE
+    // (normalized A/D/S envelope in _applyMasterEnvelope). Ramping to
+    // full volume and jumping down to sustain here was an audible click
+    // on every note attack.
     envGain.gain.setValueAtTime(0, now);
-    envGain.gain.linearRampToValueAtTime(volumeGain, now + attackTime);
-    envGain.gain.setValueAtTime(sustainLevel, now + attackTime);
+    envGain.gain.linearRampToValueAtTime(sustainLevel, now + attackTime);
 
     // Apply volume modulation if present
     if (volume.modulation) {
@@ -600,46 +680,14 @@ class NoteInstance {
       depthValue = depthValue;
     }
 
-    // Create smooth random noise buffer
-    // Buffer length determines the base period before looping
-    // We want smooth interpolation, so use longer buffer
-    const bufferDuration = 10; // 10 seconds of noise
-    const sampleRate = this.audioContext.sampleRate;
-    const bufferSize = bufferDuration * sampleRate;
-    const buffer = this.audioContext.createBuffer(1, bufferSize, sampleRate);
-    const data = buffer.getChannelData(0);
-
-    // Generate smooth random values using interpolation
-    // Create random control points and interpolate between them
-    const controlPointInterval = Math.floor(sampleRate / (rateValue * 4)); // 4 control points per rate cycle
-    let lastValue = (Math.random() * 2 - 1); // Start with random value between -1 and 1
-    let nextValue = (Math.random() * 2 - 1);
-    let controlPointIndex = 0;
-
-    for (let i = 0; i < bufferSize; i++) {
-      // Check if we need a new control point
-      if (i >= (controlPointIndex + 1) * controlPointInterval) {
-        controlPointIndex++;
-        lastValue = nextValue;
-        nextValue = (Math.random() * 2 - 1);
-      }
-
-      // Linear interpolation between control points
-      const localIndex = i - controlPointIndex * controlPointInterval;
-      const t = localIndex / controlPointInterval;
-      // Use smoothstep for smoother interpolation
-      const smoothT = t * t * (3 - 2 * t);
-      data[i] = lastValue + (nextValue - lastValue) * smoothT;
-    }
-
-    // Create buffer source
+    // Shared buffer wiggles at NOISE_BASE_RATE Hz, so playbackRate maps
+    // 1:1 to the requested rate (the old per-note buffer baked the rate
+    // into its content AND divided playbackRate by the buffer duration,
+    // making the effective rate ~10x slower than configured)
     const noiseSource = this.audioContext.createBufferSource();
-    noiseSource.buffer = buffer;
+    noiseSource.buffer = getSharedNoiseBuffer(this.audioContext);
     noiseSource.loop = true;
-
-    // Playback rate affects how fast we move through the buffer
-    // Higher rate = faster value changes
-    noiseSource.playbackRate.value = rateValue / bufferDuration;
+    noiseSource.playbackRate.value = Math.max(0.01, rateValue) / NOISE_BASE_RATE;
 
     // Create depth gain
     const depthGain = this.audioContext.createGain();
@@ -692,20 +740,22 @@ class NoteInstance {
     const masterRelease = this._resolveValue(masterAttrs.release);
     const masterReleaseTime = (masterRelease.value || 500) / 1000;
 
-    // Apply release to master envelope
-    this.noteGain.gain.cancelScheduledValues(now);
-    this.noteGain.gain.setValueAtTime(this.noteGain.gain.value, now);
+    // Apply release to master envelope (hold the in-flight automation
+    // value, then ramp — reading .gain.value after cancelScheduledValues
+    // caused a jump-then-ramp click)
+    cancelAndHold(this.noteGain.gain, now);
     this.noteGain.gain.linearRampToValueAtTime(0, now + masterReleaseTime);
 
-    // Apply release to each oscillator envelope
+    // Apply release to each oscillator envelope (releaseTime is already
+    // in seconds — dividing by 1000 again collapsed the release to ~0.5ms,
+    // an audible click)
     for (const { envGain, releaseTime } of this.oscillators) {
-      envGain.gain.cancelScheduledValues(now);
-      envGain.gain.setValueAtTime(envGain.gain.value, now);
-      envGain.gain.linearRampToValueAtTime(0, now + releaseTime / 1000);
+      cancelAndHold(envGain.gain, now);
+      envGain.gain.linearRampToValueAtTime(0, now + releaseTime);
     }
 
     // Stop oscillators and LFOs after release
-    const maxRelease = Math.max(masterReleaseTime, ...this.oscillators.map(o => o.releaseTime / 1000));
+    const maxRelease = Math.max(masterReleaseTime, ...this.oscillators.map(o => o.releaseTime));
     setTimeout(() => {
       for (const { osc } of this.oscillators) {
         try { osc.stop(); } catch (e) { /* already stopped */ }
