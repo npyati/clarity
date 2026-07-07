@@ -779,6 +779,8 @@ input[type="range"]::-moz-range-thumb:hover {
   bottom: calc(var(--space-5) + 56px);
   width: min(380px, calc(100vw - 40px));
   height: min(520px, calc(100vh - 120px));
+  min-width: 300px;
+  min-height: 260px;
   background: var(--bg-surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
@@ -787,6 +789,7 @@ input[type="range"]::-moz-range-thumb:hover {
   display: none;
   flex-direction: column;
   overflow: hidden;
+  resize: both; /* native handle, bottom-right */
 }
 
 #claude-panel.open {
@@ -800,6 +803,13 @@ input[type="range"]::-moz-range-thumb:hover {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border-strong);
   background: var(--bg-raised);
+  cursor: grab;         /* drag to move; double-click to snap home */
+  user-select: none;
+  touch-action: none;
+}
+
+.claude-head.dragging {
+  cursor: grabbing;
 }
 
 .claude-title {

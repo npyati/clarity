@@ -63,6 +63,30 @@ async function run() {
   await sleep(300);
   report('panel write-back edits text', ok && doc().includes('  wave square'), `returned=${ok}`);
 
+  // Test 6: Claude panel opens, drags, and persists position
+  const fab = win.document.getElementById('claude-fab');
+  if (!fab) {
+    report('claude panel drag', false, 'no FAB (endpoint down?)');
+  } else {
+    fab.click();
+    await sleep(200);
+    const panel = win.document.getElementById('claude-panel');
+    const head = panel.querySelector('.claude-head');
+    const r0 = panel.getBoundingClientRect();
+    const opts = (x, y) => ({ clientX: x, clientY: y, bubbles: true, pointerId: 7 });
+    head.dispatchEvent(new win.PointerEvent('pointerdown', opts(r0.left + 50, r0.top + 10)));
+    head.dispatchEvent(new win.PointerEvent('pointermove', opts(r0.left - 70, r0.top - 40)));
+    head.dispatchEvent(new win.PointerEvent('pointerup', opts(r0.left - 70, r0.top - 40)));
+    await sleep(100);
+    const r1 = panel.getBoundingClientRect();
+    const movedOk = panel.style.left !== '' &&
+      Math.abs(r1.left - (r0.left - 120)) < 5 && Math.abs(r1.top - (r0.top - 50)) < 5;
+    const persisted = (JSON.parse(win.localStorage.getItem('clarity.claude-chat') || '{}').pos || null) !== null;
+    report('claude panel drags + persists', movedOk && persisted,
+      `dx=${(r1.left - r0.left).toFixed(0)} dy=${(r1.top - r0.top).toFixed(0)} persisted=${persisted}`);
+    fab.click();
+  }
+
   done();
 }
 

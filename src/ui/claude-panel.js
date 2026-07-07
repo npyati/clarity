@@ -22,7 +22,7 @@ let chat = (() => {
     const saved = JSON.parse(localStorage.getItem(CHAT_KEY));
     if (saved && Array.isArray(saved.messages)) return saved;
   } catch (e) { /* fresh state */ }
-  return { model: 'sonnet', sessionId: null, messages: [], open: false };
+  return { model: 'sonnet', sessionId: null, messages: [], open: false, pos: null, size: null };
 })();
 
 let chatAbort = null; // AbortController while a turn is streaming
@@ -39,8 +39,119 @@ function save() {
       sessionId: chat.sessionId,
       messages: chat.messages.slice(-100),
       open: chat.open,
+      pos: chat.pos,
+      size: chat.size,
     }));
   } catch (e) { /* best-effort */ }
+}
+
+// ── Movable + resizable ─────────────────────────────────────────────────
+// Drag by the header; resize via the native CSS handle (bottom-right).
+// Position/size persist. Double-click the header to snap back home.
+
+function panelEl() {
+  return document.getElementById('claude-panel');
+}
+
+function clampPos(x, y, panel) {
+  const rect = panel.getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.min(window.innerWidth - rect.width, x)),
+    y: Math.max(0, Math.min(window.innerHeight - 40, y)), // header stays reachable
+  };
+}
+
+function applyLayout() {
+  const panel = panelEl();
+  if (!panel) return;
+  if (chat.size) {
+    panel.style.width = chat.size.w + 'px';
+    panel.style.height = chat.size.h + 'px';
+  }
+  if (chat.pos) {
+    panel.style.left = chat.pos.x + 'px';
+    panel.style.top = chat.pos.y + 'px';
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+  }
+}
+
+// The panel is CSS-anchored bottom-right; pin it to explicit left/top once
+// so dragging and the native resize handle both behave predictably
+function pinToPixels() {
+  const panel = panelEl();
+  if (!panel || chat.pos) return;
+  const rect = panel.getBoundingClientRect();
+  chat.pos = { x: rect.left, y: rect.top };
+  applyLayout();
+}
+
+function resetLayout() {
+  chat.pos = null;
+  chat.size = null;
+  const panel = panelEl();
+  if (panel) {
+    panel.style.left = panel.style.top = panel.style.right = panel.style.bottom = '';
+    panel.style.width = panel.style.height = '';
+  }
+  save();
+}
+
+function initMoveResize() {
+  const panel = panelEl();
+  const head = panel.querySelector('.claude-head');
+
+  let drag = null; // { dx, dy }
+  head.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('button, select')) return;
+    pinToPixels();
+    const rect = panel.getBoundingClientRect();
+    drag = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
+    try { head.setPointerCapture(e.pointerId); } catch (err) { /* synthetic events */ }
+    head.classList.add('dragging');
+    e.preventDefault();
+  });
+  head.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    chat.pos = clampPos(e.clientX - drag.dx, e.clientY - drag.dy, panel);
+    applyLayout();
+  });
+  const endDrag = (e) => {
+    if (!drag) return;
+    drag = null;
+    head.classList.remove('dragging');
+    if (head.hasPointerCapture?.(e.pointerId)) head.releasePointerCapture(e.pointerId);
+    save();
+  };
+  head.addEventListener('pointerup', endDrag);
+  head.addEventListener('pointercancel', endDrag);
+  head.addEventListener('dblclick', (e) => {
+    if (e.target.closest('button, select')) return;
+    resetLayout();
+  });
+
+  // Native CSS resize handle -> persist the chosen size
+  let resizeTimer = null;
+  new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      const { width, height } = entry.contentRect;
+      if (!chat.open || width < 10 || height < 10) continue; // closed (display:none)
+      if (chat.size && Math.abs(chat.size.w - width) < 2 && Math.abs(chat.size.h - height) < 2) continue;
+      pinToPixels(); // resizing while corner-anchored would fight the handle
+      chat.size = { w: Math.round(width), h: Math.round(height) };
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(save, 300);
+    }
+  }).observe(panel);
+
+  // Keep the panel reachable when the window shrinks
+  window.addEventListener('resize', () => {
+    if (!chat.pos) return;
+    chat.pos = clampPos(chat.pos.x, chat.pos.y, panel);
+    applyLayout();
+  });
+
+  applyLayout();
 }
 
 // Minimal markdown: code fences, inline code, bold, italics
@@ -269,6 +380,8 @@ export async function initClaudePanel(opts) {
     ta.style.height = 'auto';
     ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
   });
+
+  initMoveResize();
 
   if (chat.open) document.getElementById('claude-panel').classList.add('open');
   render();
