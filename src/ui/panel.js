@@ -1,5 +1,6 @@
 import { AttributeType, COMPONENT_SCHEMAS, TRIGGER_SCHEMAS, SchemaUtils } from '../dsl/schemas.js';
 import { instanceStore } from '../dsl/instance-store.js';
+import { ExpressionEvaluator } from '../dsl/expression.js';
 /**
  * ============================================================================
  * GENERIC UI GENERATOR

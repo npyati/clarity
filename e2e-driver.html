@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>e2e</title></head><body>
+<iframe id="app" src="/" style="width:1200px;height:800px"></iframe>
+<script>
+const results = [];
+function report(name, ok, detail) {
+  results.push(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`);
+}
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+async function run() {
+  const frame = document.getElementById('app');
+  const win = frame.contentWindow;
+
+  // Wait for app init
+  for (let i = 0; i < 100 && !win.clarityEditor; i++) await sleep(100);
+  if (!win.clarityEditor) { report('boot', false, 'clarityEditor never appeared'); return done(); }
+  report('boot', true);
+  await sleep(300);
+
+  const view = win.clarityEditor;
+  const doc = () => view.state.doc.toString();
+
+  // Test 1: editing master volume in text flows through the debounced
+  // parse into the store (audio params aren't assertable while the
+  // headless context is suspended)
+  const idx = doc().indexOf('  volume 80');
+  if (idx < 0) { report('find master volume line', false, JSON.stringify(doc().slice(0, 80))); return done(); }
+  view.dispatch({ changes: { from: idx + 9, to: idx + 11, insert: '40' } });
+  await sleep(400);
+  const storedVolume = win.audioEngine.store.getTriggerAttribute('master', 'volume');
+  report('text edit -> parsed into store', storedVolume === 40, `volume=${JSON.stringify(storedVolume)}`);
+
+  // Test 2: parse errors appear in the status strip ('note' without a
+  // name is a hard error)
+  const end = view.state.doc.length;
+  view.dispatch({ changes: { from: end, insert: '\nnote' } });
+  await sleep(300);
+  const statusEl = win.document.getElementById('parse-status');
+  const shown = statusEl && !statusEl.classList.contains('hidden') && /line \d+/.test(statusEl.textContent);
+  report('parse error surfaced', !!shown, statusEl ? JSON.stringify(statusEl.textContent.slice(0, 60)) : 'no status el');
+
+  // Test 3: removing the bad line clears the error
+  view.dispatch({ changes: { from: end, to: view.state.doc.length } });
+  await sleep(300);
+  const cleared = statusEl && statusEl.classList.contains('hidden');
+  report('deleting bad line clears error', !!cleared, `hidden=${cleared}`);
+
+  // Test 4: cursor on the lfo line focuses the lfo panel section
+  const lfoIdx = doc().indexOf('lfo vibrato');
+  view.dispatch({ selection: { anchor: lfoIdx + 3 } });
+  await sleep(300);
+  const h2s = [...win.document.querySelectorAll('#oscillators-container h2')].map(h => h.textContent);
+  report('cursor focuses lfo panel', h2s.some(t => t.includes('vibrato')), JSON.stringify(h2s));
+
+  // Test 5: panel write-back — simulate uiGenerator calling the bridge
+  const ok = win.updateTextFromUIChange('lfo', 'vibrato', 'wave', 'square');
+  await sleep(300);
+  report('panel write-back edits text', ok && doc().includes('  wave square'), `returned=${ok}`);
+
+  done();
+}
+
+function done() {
+  console.log('E2E_RESULTS\n' + results.join('\n') + '\nE2E_END');
+}
+run().catch(e => { report('fatal', false, String(e)); done(); });
+</script>
+</body></html>

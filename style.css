@@ -37,14 +37,16 @@ body {
 
 #parameters {
   flex: 1;
-  padding: 20px;
-  font-family: 'Hammersmith One', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 14px;
   line-height: 1.6;
   background: #282a2e;
   color: #c5c8c6;
   outline: none;
-  overflow: auto;
+  overflow: hidden; /* CodeMirror scrolls internally */
+}
+
+#parameters .cm-editor {
+  height: 100%;
 }
 
 /* Parse error surfacing */
