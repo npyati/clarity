@@ -18,6 +18,7 @@ import { audioEngine, initializeAudioEngine } from './engine/audio-engine.js';
 import { createEditor, uiEditAnnotation } from './editor/editor.js';
 import { makeIncrementKeymap } from './editor/increment.js';
 import { buildCommands, setupPalette } from './editor/palette.js';
+import { clarityDiagnostics } from './editor/diagnostics.js';
 import { changeFontSize, changeLineHeight } from './editor/appearance.js';
 
 // ============================================================================
@@ -674,6 +675,7 @@ function createAppEditor(initialDoc) {
     doc: initialDoc,
     onDocChanged,
     onCursorLine,
+    extensions: clarityDiagnostics(() => lastParseResult),
     extraKeymap: [
       ...paletteKeymap,
       ...makeIncrementKeymap(getSourceMap),

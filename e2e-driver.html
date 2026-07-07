@@ -40,6 +40,11 @@ async function run() {
   const shown = statusEl && !statusEl.classList.contains('hidden') && /line \d+/.test(statusEl.textContent);
   report('parse error surfaced', !!shown, statusEl ? JSON.stringify(statusEl.textContent.slice(0, 60)) : 'no status el');
 
+  // Lint diagnostics render squiggles/gutter markers (lint delay ~300ms)
+  await sleep(700);
+  const marks = win.document.querySelectorAll('.cm-lintRange-error, .cm-lint-marker-error').length;
+  report('lint diagnostics rendered', marks > 0, `markers=${marks}`);
+
   // Test 3: removing the bad line clears the error
   view.dispatch({ changes: { from: end, to: view.state.doc.length } });
   await sleep(300);
