@@ -19,6 +19,7 @@ import { makeIncrementKeymap } from './editor/increment.js';
 import { buildCommands, setupPalette } from './editor/palette.js';
 import { clarityDiagnostics } from './editor/diagnostics.js';
 import { changeFontSize, changeLineHeight } from './editor/appearance.js';
+import { toggleCheatsheet } from './ui/cheatsheet.js';
 
 // ============================================================================
 // BOOTSTRAP
@@ -64,6 +65,33 @@ function loadSavedDocument() {
   } catch (e) {
     console.warn('Saved document unreadable, starting from seed:', e);
     return null;
+  }
+}
+
+// Shared instruments travel in the URL fragment (#doc=base64) — no backend
+function encodeDocForShare(text) {
+  return btoa(unescape(encodeURIComponent(text)));
+}
+
+function decodeSharedDocument() {
+  const match = location.hash.match(/^#doc=(.+)$/);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(escape(atob(match[1])));
+  } catch (e) {
+    console.warn('Share link unreadable:', e);
+    return null;
+  }
+}
+
+async function copyShareLink() {
+  const url = `${location.origin}${location.pathname}#doc=${encodeDocForShare(getDocumentText())}`;
+  try {
+    await navigator.clipboard.writeText(url);
+    console.log('Share link copied');
+  } catch (e) {
+    // Clipboard denied — show the link so it can be copied manually
+    window.prompt('Copy this share link:', url);
   }
 }
 
@@ -413,61 +441,91 @@ document.addEventListener('click', (e) => {
   }
 });
 
-document.addEventListener('keydown', (e) => {
-  if (e.target.id !== 'virtual-keyboard' || !audioEngine) return;
-
-  const key = e.key.toLowerCase();
-
-  // Ignore if key is already pressed (prevents retriggering on key repeat)
-  if (activeKeys.has(key)) return;
-
+// Shared by physical keys and pointer taps on the on-screen keys
+function pressKey(key) {
+  if (!audioEngine || activeKeys.has(key)) return false;
   const midiNote = keyToNote[key];
-  if (midiNote !== undefined) {
+  if (midiNote === undefined) return false;
+
+  activeKeys.add(key);
+  const keyElement = document.querySelector(`.key-label[data-key="${key}"]`);
+  if (keyElement) keyElement.classList.add('active');
+
+  // A key with trigger definitions is a modifier: it plays no note but
+  // its actions apply to notes played while it is held
+  const keyScope = `key_${key}`;
+  const hasActions = instanceStore.collectActions(keyScope).length > 0;
+  if (hasActions) {
+    activeModifierKeys.add(key);
+    return true;
+  }
+
+  const activeModifier = activeModifierKeys.size > 0
+    ? `key_${activeModifierKeys.values().next().value}`
+    : null;
+
+  startNote(`kb-${key}`, midiNote, { velocity: 127, keyScope: activeModifier });
+  return true;
+}
+
+function releaseKey(key) {
+  if (!audioEngine || keyToNote[key] === undefined) return;
+  activeKeys.delete(key);
+
+  const keyElement = document.querySelector(`.key-label[data-key="${key}"]`);
+  if (keyElement) keyElement.classList.remove('active');
+
+  if (activeModifierKeys.has(key)) {
+    activeModifierKeys.delete(key);
+    return;
+  }
+
+  stopNote(`kb-${key}`);
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.target.id !== 'virtual-keyboard') return;
+  if (pressKey(e.key.toLowerCase())) {
     e.preventDefault();
     e.stopPropagation();
-    activeKeys.add(key);
-
-    // Highlight the key visually
-    const keyElement = document.querySelector(`.key-label[data-key="${key}"]`);
-    if (keyElement) keyElement.classList.add('active');
-
-    // A key with trigger definitions is a modifier: it plays no note but
-    // its actions apply to notes played while it is held
-    const keyScope = `key_${key}`;
-    const hasActions = instanceStore.collectActions(keyScope).length > 0;
-    if (hasActions) {
-      activeModifierKeys.add(key);
-      return;
-    }
-
-    const activeModifier = activeModifierKeys.size > 0
-      ? `key_${activeModifierKeys.values().next().value}`
-      : null;
-
-    startNote(`kb-${key}`, midiNote, { velocity: 127, keyScope: activeModifier });
   }
 });
 
 document.addEventListener('keyup', (e) => {
-  if (e.target.id !== 'virtual-keyboard' || !audioEngine) return;
-
   const key = e.key.toLowerCase();
-  const midiNote = keyToNote[key];
+  if (e.target.id !== 'virtual-keyboard' || keyToNote[key] === undefined) return;
+  e.preventDefault();
+  e.stopPropagation();
+  releaseKey(key);
+});
 
-  if (midiNote !== undefined) {
-    e.preventDefault();
-    e.stopPropagation();
-    activeKeys.delete(key);
+// Click/touch playing: pointer down on a key plays it until release
+const pointerKeys = new Map(); // pointerId -> key
 
-    const keyElement = document.querySelector(`.key-label[data-key="${key}"]`);
-    if (keyElement) keyElement.classList.remove('active');
+document.addEventListener('pointerdown', (e) => {
+  const keyElement = e.target.closest('.key-label');
+  if (!keyElement || !keyElement.dataset.key) return;
+  e.preventDefault();
+  const keyboard = document.getElementById('virtual-keyboard');
+  if (keyboard) keyboard.focus();
+  const key = keyElement.dataset.key;
+  pointerKeys.set(e.pointerId, key);
+  pressKey(key);
+});
 
-    if (activeModifierKeys.has(key)) {
-      activeModifierKeys.delete(key);
-      return;
-    }
+document.addEventListener('pointerup', (e) => {
+  const key = pointerKeys.get(e.pointerId);
+  if (key !== undefined) {
+    pointerKeys.delete(e.pointerId);
+    releaseKey(key);
+  }
+});
 
-    stopNote(`kb-${key}`);
+document.addEventListener('pointercancel', (e) => {
+  const key = pointerKeys.get(e.pointerId);
+  if (key !== undefined) {
+    pointerKeys.delete(e.pointerId);
+    releaseKey(key);
   }
 });
 
@@ -577,6 +635,16 @@ function createAppEditor(initialDoc) {
       },
     },
     {
+      name: 'Copy Share Link',
+      description: 'Copy a URL that opens this exact instrument',
+      run: () => copyShareLink(),
+    },
+    {
+      name: 'Syntax Cheatsheet',
+      description: 'Show the language reference (generated from the schemas)',
+      run: () => toggleCheatsheet(),
+    },
+    {
       name: 'Start Recording',
       description: 'Record the master output (stop to download a .webm)',
       run: () => startRecording(),
@@ -651,8 +719,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // Visualizer connects to the engine's persistent master gain
     initializeVisualizer();
 
+    // A share link beats the saved document, which beats the seed
+    const shared = decodeSharedDocument();
     const saved = loadSavedDocument();
-    createAppEditor(saved !== null ? saved : SEED_DOCUMENT);
+    createAppEditor(shared !== null ? shared : (saved !== null ? saved : SEED_DOCUMENT));
     window.clarityEditor = editorView; // debug/e2e handle
 
     // First parse + panel + audio configuration
