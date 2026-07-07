@@ -41,7 +41,11 @@ class ExpressionEvaluator {
       });
 
       // Evaluate the expression using precedence climbing
-      return this._evaluateTokens(resolvedTokens);
+      const result = this._evaluateTokens(resolvedTokens);
+      if (!Number.isFinite(result)) {
+        throw new Error(`Expression did not produce a finite number: ${expression}`);
+      }
+      return result;
     } catch (error) {
       console.error('Expression evaluation error:', error);
       return null;
@@ -53,11 +57,18 @@ class ExpressionEvaluator {
    */
   static _tokenize(expression) {
     const tokens = [];
-    const str = expression.replace(/\s+/g, ''); // Remove whitespace
+    const str = expression;
     let i = 0;
 
     while (i < str.length) {
       const char = str[i];
+
+      // Whitespace is a token boundary, not removable — "5 5" must not
+      // silently merge into "55"
+      if (char === ' ' || char === '\t') {
+        i++;
+        continue;
+      }
 
       // Numbers (including decimals)
       if (char >= '0' && char <= '9' || char === '.') {
@@ -88,8 +99,9 @@ class ExpressionEvaluator {
         continue;
       }
 
-      // Unknown character - skip it
-      i++;
+      // Unknown character - error out rather than silently mutating the
+      // expression (e.g. "x % 2" must not become "x2")
+      throw new Error(`Unknown character "${char}" in expression`);
     }
 
     return tokens;
@@ -125,6 +137,9 @@ class ExpressionEvaluator {
         const op = tokens[index].value;
         index++;
         const right = parsePrimary();
+        if (op === '/' && right === 0) {
+          throw new Error('Division by zero');
+        }
         left = op === '*' ? left * right : left / right;
       }
 
@@ -133,6 +148,9 @@ class ExpressionEvaluator {
 
     const parsePrimary = () => {
       const token = tokens[index];
+      if (!token) {
+        throw new Error('Unexpected end of expression');
+      }
 
       if (token.type === 'number') {
         index++;
@@ -142,6 +160,9 @@ class ExpressionEvaluator {
       if (token.type === 'operator' && token.value === '(') {
         index++; // skip '('
         const result = parseExpression();
+        if (!tokens[index] || tokens[index].value !== ')') {
+          throw new Error('Missing closing parenthesis');
+        }
         index++; // skip ')'
         return result;
       }
@@ -154,7 +175,11 @@ class ExpressionEvaluator {
       throw new Error(`Unexpected token: ${JSON.stringify(token)}`);
     };
 
-    return parseExpression();
+    const result = parseExpression();
+    if (index < tokens.length) {
+      throw new Error(`Unexpected trailing token: ${JSON.stringify(tokens[index])}`);
+    }
+    return result;
   }
 
   /**

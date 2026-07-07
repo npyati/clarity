@@ -1307,7 +1307,7 @@ function findWaveTypeAtPosition(text, position) {
 // Handle increment/decrement within a block
 function performIncrementInBlock(contentEl, direction, shiftKey) {
   const text = contentEl.textContent;
-  const cursorOffset = getCursorPositionInBlock(contentEl);
+  const cursorOffset = getCursorPositionInBlock(contentEl).offset;
   const block = contentEl.closest('.block');
   if (!block) return;
 
@@ -1431,8 +1431,8 @@ function performIncrementInBlock(contentEl, direction, shiftKey) {
   // Format this block
   formatBlock(block);
 
-  // Restore cursor position in block
-  setCursorPositionInBlock(contentEl, numberInfo.start + String(newValue).length);
+  // Restore cursor position at the end of the rewritten line
+  setCursorPositionInBlock(contentEl, newText.length);
 }
 
 // Register command modal event listeners

@@ -24,6 +24,10 @@ class AudioEngine {
     // Active notes (for cleanup)
     // Map<noteKey, NoteInstance>
     this.activeNotes = new Map();
+
+    // Monotonic counter for voice keys (Date.now() collides for
+    // chord tones created in the same millisecond)
+    this._voiceSeq = 0;
   }
 
   /**
@@ -85,15 +89,8 @@ class AudioEngine {
     }
 
     // Always update volume (whether structure changed or not)
-    if (masterVolumeAttr !== null) {
-      // Handle new { value, modulation } structure
-      const volumeValue = (masterVolumeAttr && typeof masterVolumeAttr === 'object' && masterVolumeAttr.value !== undefined)
-        ? masterVolumeAttr.value
-        : masterVolumeAttr;
-      this.masterGain.gain.value = this._percentageToGain(volumeValue);
-    } else {
-      this.masterGain.gain.value = 0.8; // Default
-    }
+    const volumePercent = this._resolveNumeric(masterVolumeAttr, 80);
+    this.masterGain.gain.value = Math.max(0, Math.min(1, volumePercent / 100));
 
     // Return the input node (last in chain)
     if (this.masterCompressor) return this.masterCompressor;
@@ -130,7 +127,7 @@ class AudioEngine {
     );
 
     // Track active note
-    const noteKey = `${noteName}_${Date.now()}`;
+    const noteKey = `${noteName}_${this._voiceSeq++}`;
     this.activeNotes.set(noteKey, note);
 
     // Get master input
@@ -247,6 +244,32 @@ class AudioEngine {
 
     // Return literal value
     return attrValue;
+  }
+
+  /**
+   * Resolve an attribute value to a finite number, following variable
+   * references and expressions; returns fallback if resolution fails.
+   * Accepts raw values, { value, modulation } wrappers, variable_ref
+   * and expression objects.
+   */
+  _resolveNumeric(value, fallback) {
+    let v = value;
+    if (v && typeof v === 'object' && !v.type && v.value !== undefined) {
+      v = v.value; // { value, modulation } wrapper
+    }
+    if (v && typeof v === 'object' && v.type === 'variable_ref') {
+      v = this.store.resolveVariable(v.value, null);
+    } else if (v && typeof v === 'object' && v.type === 'expression') {
+      v = ExpressionEvaluator.evaluate(v.value, (name) => {
+        const resolved = this.store.resolveVariable(name, null);
+        return (resolved && typeof resolved === 'object' && 'value' in resolved)
+          ? resolved.value
+          : resolved;
+      });
+    }
+    if (v && typeof v === 'object' && 'value' in v) v = v.value;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fallback;
   }
 
   /**
@@ -659,6 +682,9 @@ class NoteInstance {
    * Stop the note
    */
   stop() {
+    if (this._stopped) return;
+    this._stopped = true;
+
     const now = this.audioContext.currentTime;
 
     // Get master release time
@@ -682,10 +708,10 @@ class NoteInstance {
     const maxRelease = Math.max(masterReleaseTime, ...this.oscillators.map(o => o.releaseTime / 1000));
     setTimeout(() => {
       for (const { osc } of this.oscillators) {
-        osc.stop();
+        try { osc.stop(); } catch (e) { /* already stopped */ }
       }
       for (const lfo of this.lfos) {
-        lfo.stop();
+        try { lfo.stop(); } catch (e) { /* already stopped */ }
       }
     }, maxRelease * 1000 + 100);
   }
