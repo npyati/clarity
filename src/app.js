@@ -20,6 +20,7 @@ import { buildCommands, setupPalette } from './editor/palette.js';
 import { clarityDiagnostics } from './editor/diagnostics.js';
 import { changeFontSize, changeLineHeight } from './editor/appearance.js';
 import { toggleCheatsheet } from './ui/cheatsheet.js';
+import { toggleHelp } from './ui/help.js';
 import { initClaudePanel } from './ui/claude-panel.js';
 
 // ============================================================================
@@ -634,6 +635,11 @@ function createAppEditor(initialDoc) {
 
   const appCommands = [
     {
+      name: 'Help',
+      description: 'Readme: what Clarity is, how it works, shortcuts',
+      run: () => toggleHelp(),
+    },
+    {
       name: 'Reset to Seed Document',
       description: 'Discard the saved document and restore the built-in example',
       run: (view) => {
@@ -742,6 +748,8 @@ document.addEventListener('DOMContentLoaded', () => {
     syncUIFromText();
 
     // Claude panel (dev server only — hides itself in production builds)
+    document.getElementById('help-trigger')?.addEventListener('click', toggleHelp);
+
     initClaudePanel({ getDoc: getDocumentText, setDoc: setDocumentText });
 
     console.log('Initialization complete!');

@@ -15,11 +15,14 @@
  * the current tab. Screenshots pasted into the panel ride along with the
  * next message from that tab.
  *
- * Dev-server only: probes /api/claude/ping and stays hidden without it.
+ * Dev-server only: probes /api/claude/ping. Without it (the hosted site)
+ * the button opens an explainer of what the panel does and how to run
+ * Clarity locally to get it.
  * Chats live in this browser's localStorage; pasted images live in the
  * OS temp dir — neither is ever inside the repo.
  */
 import { syntaxMarkdown } from './cheatsheet.js';
+import { LOCAL_SETUP_HTML } from './help.js';
 
 const CHAT_KEY = 'clarity.claude-chats';
 const CHAT_MODELS = [['haiku', 'Haiku'], ['sonnet', 'Sonnet'], ['opus', 'Opus']];
@@ -175,16 +178,18 @@ function initMoveResize() {
 
   // Native CSS resize handle -> persist the chosen size
   let resizeTimer = null;
-  new ResizeObserver((entries) => {
-    for (const entry of entries) {
-      const { width, height } = entry.contentRect;
-      if (!state.open || width < 10 || height < 10) continue; // closed (display:none)
-      if (state.size && Math.abs(state.size.w - width) < 2 && Math.abs(state.size.h - height) < 2) continue;
-      pinToPixels(); // resizing while corner-anchored would fight the handle
-      state.size = { w: Math.round(width), h: Math.round(height) };
-      if (resizeTimer) clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(save, 300);
-    }
+  // Measure the border box: style.width is border-box (global box-sizing),
+  // so saving contentRect would shrink the panel by its border on every
+  // applyLayout — i.e. on every pointermove while dragging
+  new ResizeObserver(() => {
+    const width = panel.offsetWidth;
+    const height = panel.offsetHeight;
+    if (!state.open || width < 10 || height < 10) return; // closed (display:none)
+    if (state.size && Math.abs(state.size.w - width) < 2 && Math.abs(state.size.h - height) < 2) return;
+    pinToPixels(); // resizing while corner-anchored would fight the handle
+    state.size = { w: Math.round(width), h: Math.round(height) };
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(save, 300);
   }).observe(panel);
 
   // Keep the panel reachable when the window shrinks
@@ -496,14 +501,59 @@ async function run(c, text, asst, allowRetry) {
   render();
 }
 
+// Hosted site: same button and frame, but the panel explains what it does
+// when Clarity runs locally instead of chatting
+function initOffline() {
+  const root = document.createElement('div');
+  root.id = 'claude-root';
+  root.innerHTML = `
+    <button id="claude-fab" title="Claude (available when running locally)">${CLAUDE_LOGO}</button>
+    <div id="claude-panel" class="offline">
+      <div class="claude-head">
+        <span class="claude-title">${CLAUDE_LOGO} claude</span>
+        <button class="claude-icon-btn" id="claude-close" title="Close (⌘J)">×</button>
+      </div>
+      <div class="claude-offline help-body">
+        <p>Run Clarity on your own computer and this button opens a chat with Claude Code that edits your
+        instrument live. Ask for "a warmer pad", "add a slow filter sweep" or "make the bass punchier",
+        and the text and sound change as it works.</p>
+        <p>Paste screenshots, run several chats side by side in tabs, and pick the model per chat.
+        It uses your own Claude Code sign-in; nothing goes through this website.</p>
+        <p>It isn't available here because a web page can't reach Claude Code on your machine. To get it:</p>
+        ${LOCAL_SETUP_HTML}
+      </div>
+    </div>`;
+  document.body.appendChild(root);
+
+  const panel = panelEl();
+  const toggleOffline = () => {
+    state.open = !state.open;
+    panel.classList.toggle('open', state.open);
+  };
+  document.getElementById('claude-fab').addEventListener('click', toggleOffline);
+  document.getElementById('claude-close').addEventListener('click', toggleOffline);
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key?.toLowerCase() === 'j') {
+      e.preventDefault();
+      toggleOffline();
+    }
+  }, true);
+
+  state.open = false; // the explainer never reopens on its own
+  initMoveResize();
+}
+
 export async function initClaudePanel(opts) {
   hooks = opts;
 
-  // Dev-server only: no endpoint, no panel
+  // The chat needs the dev server's CLI bridge; without it, explain
+  let live = false;
   try {
     const ping = await fetch('/api/claude/ping');
-    if (!ping.ok || !(await ping.json()).ok) return;
-  } catch (e) {
+    live = ping.ok && !!(await ping.json()).ok;
+  } catch (e) { /* hosted / static build */ }
+  if (!live) {
+    initOffline();
     return;
   }
 
