@@ -259,8 +259,8 @@ class WaveformVisualizer {
     ctx.font = '10px "JetBrains Mono", monospace';
     ctx.textAlign = 'left';
 
-    ctx.fillText('WAVEFORM', 8, 15);
-    ctx.fillText('SPECTRUM', 8, canvasHeight / 2 + 15);
+    ctx.fillText('waveform', 8, 15);
+    ctx.fillText('spectrum', 8, canvasHeight / 2 + 15);
 
     // Frequency labels sit exactly on the log-axis gridlines
     const markerY = canvasHeight - 5;

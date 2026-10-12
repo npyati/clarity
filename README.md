@@ -2,6 +2,8 @@
 
 A text-based polyphonic synthesizer for the browser. Define your instrument by editing structured text that dynamically generates the user interface.
 
+Built in 2026 by Nick Pyati.
+
 ## Quick Start
 
 1. `npm install` (first time only), then `npm run dev`

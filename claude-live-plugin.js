@@ -2,26 +2,33 @@
  * Vite dev-server middleware: the Claude panel's backend.
  *
  * POST /api/claude/chat writes the current document into a sandboxed
- * workspace (.claude-live/instrument.clarity + SYNTAX.md), spawns the
+ * per-chat workspace (.claude-live/<chat id>/instrument.clarity +
+ * SYNTAX.md — one folder per panel tab, so parallel chats never share
+ * files, and the CLI's --resume sessions stay keyed to that folder), spawns the
  * local `claude` CLI headless with file tools confined to that folder,
  * and streams its stream-json output back as NDJSON. While the turn
  * runs, the workspace is watched: every change to instrument.clarity is
  * pushed into the stream as a {type:'doc_update', text} event so the
  * editor updates live mid-turn.
  *
+ * POST /api/claude/upload stores a pasted image in the OS temp dir (never
+ * the repo) and GET /api/claude/uploads/<name> serves it back; the CLI is
+ * granted read access to that folder via --add-dir.
+ *
  * Dev-only by construction — the production build has no server. The
  * panel probes GET /api/claude/ping and hides itself when absent.
- * (Pattern adapted from npyati/becoming's serve.py chat endpoint.)
  */
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 
-const WORKSPACE = path.resolve('.claude-live');
-const DOC_FILE = path.join(WORKSPACE, 'instrument.clarity');
-const SYNTAX_FILE = path.join(WORKSPACE, 'SYNTAX.md');
+const WORKSPACE_ROOT = path.resolve('.claude-live');
+const UPLOADS = path.join(os.tmpdir(), 'clarity-claude-uploads');
+const IMAGE_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
+const MAX_UPLOAD = 10 * 1024 * 1024;
 const MODELS = new Set(['haiku', 'sonnet', 'opus']);
 
 // File tools only, confined to the workspace folder by cwd
@@ -31,6 +38,7 @@ const SYSTEM_NOTE = `You are the assistant embedded in Clarity, a text-based syn
 Your working directory holds exactly two files:
 - instrument.clarity — the user's live instrument document. This is the ONLY file you should change. The UI applies your edits to the running synth immediately after every Write/Edit, so prefer small targeted edits over full rewrites.
 - SYNTAX.md — the complete language reference, generated from the app's schemas. Read it before your first edit; only syntax it documents will parse.
+The user may attach screenshots as "[Attached image: <path>]" — Read that path to see it.
 Ground rules: keep the document parseable at every step (2-space indent for attributes, 4-space for modulation lines); component names must be unique; be conservative with volumes (keep master volume <= 80). After editing, confirm what changed in one short sentence — long answers do not fit the panel.`;
 
 function findClaudeBin() {
@@ -49,6 +57,20 @@ function findClaudeBin() {
   return null;
 }
 
+function readRaw(req, limit) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', chunk => {
+      size += chunk.length;
+      if (size > limit) { reject(new Error('too large')); req.destroy(); return; }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
@@ -65,6 +87,42 @@ export function claudeLivePlugin() {
       server.middlewares.use('/api/claude/ping', (req, res) => {
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ ok: !!findClaudeBin() }));
+      });
+
+      server.middlewares.use('/api/claude/upload', async (req, res) => {
+        const ext = IMAGE_TYPES[(req.headers['content-type'] || '').split(';')[0]];
+        if (req.method !== 'POST' || !ext) {
+          res.statusCode = 400;
+          res.end('POST an image (png, jpeg, gif, webp)');
+          return;
+        }
+        let data;
+        try {
+          data = await readRaw(req, MAX_UPLOAD);
+        } catch (e) {
+          res.statusCode = 413;
+          res.end('image too large (10 MB max)');
+          return;
+        }
+        fs.mkdirSync(UPLOADS, { recursive: true });
+        const name = `${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
+        const file = path.join(UPLOADS, name);
+        fs.writeFileSync(file, data);
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ url: `/api/claude/uploads/${name}`, path: file }));
+      });
+
+      server.middlewares.use('/api/claude/uploads', (req, res) => {
+        const name = path.basename(decodeURIComponent((req.url || '').split('?')[0]));
+        const type = Object.keys(IMAGE_TYPES).find(t => name.endsWith('.' + IMAGE_TYPES[t]));
+        const file = path.join(UPLOADS, name);
+        if (!type || !fs.existsSync(file)) {
+          res.statusCode = 404;
+          res.end('not found');
+          return;
+        }
+        res.setHeader('Content-Type', type);
+        fs.createReadStream(file).pipe(res);
       });
 
       server.middlewares.use('/api/claude/chat', async (req, res) => {
@@ -102,8 +160,13 @@ export function claudeLivePlugin() {
           return;
         }
 
-        // Fresh workspace state for this turn
+        // One folder per chat tab; fresh document state for this turn
+        const chatId = String(payload.chat_id || 'default').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || 'default';
+        const WORKSPACE = path.join(WORKSPACE_ROOT, chatId);
+        const DOC_FILE = path.join(WORKSPACE, 'instrument.clarity');
+        const SYNTAX_FILE = path.join(WORKSPACE, 'SYNTAX.md');
         fs.mkdirSync(WORKSPACE, { recursive: true });
+        fs.mkdirSync(UPLOADS, { recursive: true });
         fs.writeFileSync(DOC_FILE, typeof payload.doc === 'string' ? payload.doc : '');
         if (typeof payload.syntax === 'string' && payload.syntax) {
           fs.writeFileSync(SYNTAX_FILE, payload.syntax);
@@ -117,6 +180,7 @@ export function claudeLivePlugin() {
           '--permission-mode', 'acceptEdits',
           '--allowedTools', ALLOWED_TOOLS,
           '--append-system-prompt', SYSTEM_NOTE,
+          '--add-dir', UPLOADS, // pasted screenshots are readable, nothing else
         ];
         if (payload.session_id) args.push('--resume', payload.session_id);
 
